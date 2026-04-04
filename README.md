@@ -132,7 +132,14 @@ Every task injects 1–3 irrelevant fields into `known_profile`:
 
 Querying any of these costs `-1.0` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
 
-## Anti-Memorization
+- `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
+- `reports/report_<timestamp>/logs_<timestamp>/`
+- `reports/report_<timestamp>/run_manifest_<timestamp>.json`
+- `reports/report_<timestamp>/average_scores.png`
+- `reports/report_<timestamp>/task_heatmap.png`
+- `reports/report_<timestamp>/efficiency_scatter.png`
+- `reports/report_<timestamp>/results.json`
+- `reports/report_<timestamp>/summary.csv`
 
 Every `reset()` generates a fresh randomised persona:
 - Task 1: age randomised 18–35, income 1,000–9,999
@@ -160,14 +167,19 @@ export ENV_URL=http://localhost:7860
 python inference.py
 ```
 
-## Baseline Scores
+Generate a report from an explicit bundled run directory:
 
-| Model | Task 1 | Task 2 | Task 3 | Task 4 | Average |
-|---|---|---|---|---|---|
-| Qwen/Qwen2.5-7B-Instruct | 1.0 | 1.0 | 1.0 | 1.0 | **1.00** |
-| NousResearch/Hermes-2-Pro-Llama-3-8B | 0.5 | 1.0 | 0.0 | 0.0 | **0.38** |
-| Qwen/Qwen2.5-Coder-7B-Instruct | 0.0 | 1.0 | 0.0 | 0.0 | **0.25** |
-| microsoft/Phi-3-mini-4k-instruct | 0.0 | 0.0 | 0.0 | 0.0 | **0.00** |
+```bash
+python benchmark_report.py --run-dir reports/report_20260404_124255
+```
+
+Generate a report from explicit artifact paths:
+
+```bash
+python benchmark_report.py \
+  --csv reports/report_20260404_124255/leaderboard_20260404_124255.csv \
+  --logs-dir reports/report_20260404_124255/logs_20260404_124255
+```
 
 Score variance confirmed across model capability tiers.
 
