@@ -1,5 +1,5 @@
 ---
-title: Scheme Env Environment Server
+title: Scheme Enrollment Env
 emoji: 🏛️
 colorFrom: orange
 colorTo: green
