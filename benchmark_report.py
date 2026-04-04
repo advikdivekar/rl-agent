@@ -141,9 +141,26 @@ def parse_args() -> argparse.Namespace:
 
 
 def discover_artifact_pairs(base_dir: Path) -> list[tuple[str, Optional[Path], Path]]:
+    manifest_map: dict[str, dict] = {}
+    for manifest_path in base_dir.glob("run_manifest_*.json"):
+        try:
+            payload = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError:
+            continue
+        timestamp = payload.get("timestamp")
+        if timestamp:
+            manifest_map[timestamp] = payload
+
     csv_map = {path.stem.replace("leaderboard_", ""): path for path in base_dir.glob("leaderboard_*.csv")}
     logs_map = {path.name.replace("logs_", ""): path for path in base_dir.glob("logs_*") if path.is_dir()}
-    timestamps = sorted(set(csv_map) | set(logs_map))
+    for timestamp, payload in manifest_map.items():
+        csv_name = payload.get("results_file")
+        logs_name = payload.get("logs_dir")
+        if csv_name:
+            csv_map.setdefault(timestamp, base_dir / csv_name)
+        if logs_name:
+            logs_map.setdefault(timestamp, base_dir / logs_name)
+    timestamps = sorted(set(csv_map) | set(logs_map) | set(manifest_map))
     return [(timestamp, csv_map.get(timestamp), logs_map[timestamp]) for timestamp in timestamps if timestamp in logs_map]
 
 
@@ -224,7 +241,7 @@ def parse_actions(task_body: str) -> list[ParsedAction]:
 def parse_tasks(log_text: str) -> list[ParsedTask]:
     matches = list(
         re.finditer(
-            r"TASK\s+([1-4])/4(.*?)(?=\n={20,}\n\s+TASK\s+[1-4]/4|\n={20,}\n\s+FINAL SCORES:|\Z)",
+            r"TASK\s+([1-4])/[0-9]+(.*?)(?=\n={20,}\n\s+TASK\s+[1-4]/[0-9]+|\n={20,}\n\s+FINAL|\Z)",
             log_text,
             re.DOTALL,
         )
@@ -261,12 +278,42 @@ def parse_model_log(log_path: Path, csv_row: Optional[dict[str, str]]) -> tuple[
     task_scores = {task.task_number: task.grader_score for task in tasks}
 
     avg_match = re.search(r"FINAL SCORES:\s*Avg\s*([0-9.]+)\s*/?\s*1\.0", log_text)
+    if not avg_match:
+        avg_match = re.search(r"Average\s*:\s*([0-9.]+)\s*/\s*1\.0", log_text)
     if avg_match:
         average_score = float(avg_match.group(1))
     elif tasks:
-        average_score = round(sum(task_scores.get(task_number, 0.0) for task_number in TASK_NUMBERS) / 4, 4)
+        average_score = round(sum(task_scores.values()) / len(tasks), 4)
     else:
         average_score = 0.0
+
+    final_task_matches = re.findall(r"Task\s+([1-4]).*?:\s*([0-9.]+)\s*/\s*1\.0", log_text)
+    if final_task_matches:
+        task_summary_map = {int(task_number): float(value) for task_number, value in final_task_matches}
+        if not tasks:
+            tasks = [
+                ParsedTask(
+                    task_number=task_number,
+                    task_name=TASK_NAMES.get(task_number, f"T{task_number}"),
+                    grader_score=score,
+                    steps_taken=0,
+                    terminated=True,
+                    actions=[],
+                )
+                for task_number, score in sorted(task_summary_map.items())
+            ]
+        else:
+            tasks = [
+                ParsedTask(
+                    task_number=task.task_number,
+                    task_name=task.task_name,
+                    grader_score=task_summary_map.get(task.task_number, task.grader_score),
+                    steps_taken=task.steps_taken,
+                    terminated=task.terminated,
+                    actions=task.actions,
+                )
+                for task in tasks
+            ]
 
     stderr = ""
     if "\n--- STDERR ---\n" in log_text:
@@ -279,7 +326,8 @@ def parse_model_log(log_path: Path, csv_row: Optional[dict[str, str]]) -> tuple[
     )
 
     completed_tasks = sum(1 for task in tasks if task.terminated)
-    if completed_tasks == 4:
+    expected_tasks = len(tasks) if tasks else 0
+    if expected_tasks and completed_tasks == expected_tasks:
         status = "Completed"
     elif error_type == "timeout" or (csv_row and csv_row.get("Status") == "Timeout"):
         status = "Timeout"
@@ -323,6 +371,11 @@ def parse_model_log(log_path: Path, csv_row: Optional[dict[str, str]]) -> tuple[
         ),
         warnings,
     )
+
+
+def active_task_numbers(models: list[ParsedModelRun]) -> list[int]:
+    numbers = sorted({task.task_number for model in models for task in model.tasks})
+    return numbers or [1, 2, 3]
 
 
 def reconcile_bundle(timestamp: str, csv_path: Optional[Path], logs_dir: Path) -> ReportBundle:
@@ -449,18 +502,19 @@ def create_average_score_chart(models: list[ParsedModelRun], output_dir: Path) -
 
 
 def create_task_heatmap(models: list[ParsedModelRun], output_dir: Path) -> Path:
+    task_numbers = active_task_numbers(models)
     score_matrix = []
     step_matrix = []
     for model in models:
         task_map = {task.task_number: task for task in model.tasks}
-        score_matrix.append([task_map.get(number, ParsedTask(number, TASK_NAMES[number])).grader_score for number in TASK_NUMBERS])
-        step_matrix.append([task_map.get(number, ParsedTask(number, TASK_NAMES[number])).steps_taken for number in TASK_NUMBERS])
+        score_matrix.append([task_map.get(number, ParsedTask(number, TASK_NAMES[number])).grader_score for number in task_numbers])
+        step_matrix.append([task_map.get(number, ParsedTask(number, TASK_NAMES[number])).steps_taken for number in task_numbers])
 
     cmap = LinearSegmentedColormap.from_list("benchmark_heat", ["#fff2c9", "#79cfc0", "#39a8df", "#1b2868"])
     fig, ax = plt.subplots(figsize=(13.8, 7.6))
     image = ax.imshow(score_matrix, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto")
-    ax.set_xticks(range(len(TASK_NUMBERS)))
-    ax.set_xticklabels([_short_label(TASK_NAMES[number], 16) for number in TASK_NUMBERS])
+    ax.set_xticks(range(len(task_numbers)))
+    ax.set_xticklabels([_short_label(TASK_NAMES[number], 16) for number in task_numbers])
     ax.set_yticks(range(len(models)))
     ax.set_yticklabels([_short_label(model.model_name, 26) for model in models])
     _style_axes(ax, "Per-Task Reliability Heatmap", "Cell color shows score. Secondary annotation shows step count per task.", "Model")
@@ -475,7 +529,7 @@ def create_task_heatmap(models: list[ParsedModelRun], output_dir: Path) -> Path:
 
     cbar = fig.colorbar(image, ax=ax)
     cbar.set_label("Task score", fontsize=11)
-    for x in range(len(TASK_NUMBERS) + 1):
+    for x in range(len(task_numbers) + 1):
         ax.axvline(x - 0.5, color="white", linewidth=1.2, alpha=0.8)
     for y in range(len(models) + 1):
         ax.axhline(y - 0.5, color="white", linewidth=1.2, alpha=0.8)
@@ -645,7 +699,6 @@ def write_summary_csv(bundle: ReportBundle, output_dir: Path) -> Path:
                 "task_1_score",
                 "task_2_score",
                 "task_3_score",
-                "task_4_score",
                 "total_steps",
                 "negative_reward_steps",
                 "error_type",
@@ -662,7 +715,6 @@ def write_summary_csv(bundle: ReportBundle, output_dir: Path) -> Path:
                     f"{scores.get(1, 0.0):.4f}",
                     f"{scores.get(2, 0.0):.4f}",
                     f"{scores.get(3, 0.0):.4f}",
-                    f"{scores.get(4, 0.0):.4f}",
                     model.total_steps,
                     model.total_negative_reward_steps,
                     model.error_type or "",
