@@ -3,7 +3,7 @@ import random
 from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
-
+from .schemes import get_eligible_schemes, get_optimal_scheme
 from models import Action, Observation
 
 # Maximum number of steps allowed per episode before forced termination
