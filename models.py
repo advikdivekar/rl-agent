@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Literal
 from openenv.core.env_server.interfaces import Observation as BaseObservation, Action as BaseAction
 
 
 class Action(BaseAction):
     # The type of action the agent wants to take — must be one of the 5 valid action types
-    action_type: str = Field(
+    action_type: Literal["ask_question", "request_document", "approve_scheme", "reject_applicant", "escalate"] = Field(
         description="Must be one of: ask_question, request_document, approve_scheme, reject_applicant, escalate"
     )
     # The argument for the action — field name, document name, scheme name, or rejection reason
