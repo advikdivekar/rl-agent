@@ -1,10 +1,79 @@
 import random
+import math  # 🔥 NEW
 from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 from .schemes import SCHEMES
 from models import Action, Observation
+
+# 🔥 NEW: Reward Utilities
+# WHY: Converts raw reward into bounded score → improves stability across different LLM behaviors
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
+
+# WHY: Different tasks require different priorities (e.g., Task 4 prioritizes safety)
+WEIGHTS = {
+    1: (0.5, 0.2, 0.2, 0.1),
+    2: (0.4, 0.2, 0.3, 0.1),
+    3: (0.5, 0.2, 0.2, 0.1),
+    4: (0.3, 0.1, 0.2, 0.4),
+}
+
+# WHY: Replace static reward with multi-dimensional evaluation
+def _compute_final_reward(task, obs, step_count, persona, base_outcome):
+    # -------- TASK SUCCESS --------
+    # WHY: Strong signal for correctness (primary objective)
+    if base_outcome == "optimal":
+        task_reward = 6
+    elif base_outcome == "suboptimal":
+        task_reward = 4
+    elif base_outcome == "safe":
+        task_reward = 3
+    else:
+        task_reward = -6 # strong penalty for incorrect decisions
+
+    # -------- EFFICIENCY --------
+    # WHY: Encourages fewer steps → prevents unnecessary exploration
+    ideal_steps = len(persona.get("missing_keys", [])) + 1
+    efficiency = ideal_steps / max(step_count, 1)
+    efficiency_reward = 3 * efficiency
+
+    # -------- REASONING QUALITY --------
+    # WHY: Reward meaningful interactions instead of blind querying
+    reasoning_reward = (
+        obs.metadata.get("relevant_queries", 0) * 0.5
+        - obs.metadata.get("noise_queries", 0) * 0.7
+        - obs.metadata.get("redundant_queries", 0) * 0.5
+        + obs.metadata.get("critical_discoveries", 0) * 2
+    )
+
+    # -------- SAFETY --------
+    # WHY: Critical for real-world decision systems (especially fraud cases)
+    safety_reward = 0
+    safety_reward = 0
+    if task == 4:
+        if obs.metadata.get("critical_discoveries", 0) > 0:
+            safety_reward += 2
+        if base_outcome == "safe":
+            safety_reward += 1
+
+    # -------- WEIGHTED COMBINATION --------
+    # WHY: Adapt reward priorities based on task difficulty
+    w_task, w_eff, w_reason, w_safe = WEIGHTS[task]
+
+    total_reward = (
+        w_task * task_reward
+        + w_eff * efficiency_reward
+        + w_reason * reasoning_reward
+        + w_safe * safety_reward
+    )
+    # -------- NORMALIZATION --------
+    # WHY: Ensures consistent scoring across different runs/models
+    final_score = sigmoid(total_reward / 10)
+
+    return total_reward, round(final_score, 3)
+
 
 # Maximum steps allowed per episode before forced termination
 MAX_STEPS = 20
