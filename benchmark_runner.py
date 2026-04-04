@@ -1,4 +1,4 @@
-import os, asyncio, csv, re, subprocess
+import os, asyncio, csv, json, re
 from datetime import datetime
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
@@ -18,12 +18,26 @@ MODELS_TO_TEST = [
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 RESULTS_FILE, LOG_DIR = f"leaderboard_{TIMESTAMP}.csv", f"logs_{TIMESTAMP}"
+MANIFEST_FILE = f"run_manifest_{TIMESTAMP}.json"
 
 def extract_scores(output_text: str) -> dict:
     scores = {"Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0, "Task 4": 0.0, "Average": 0.0}
-    for key in scores.keys():
-        match = re.search(f"{key}.*?:\\s*([0-9.]+)\\s*/", output_text)
-        if match: scores[key] = float(match.group(1))
+    task_matches = re.findall(
+        r"TASK\s+([1-4])/4.*?GRADER SCORE:\s*([0-9.]+)\s*/\s*1\.0",
+        output_text,
+        re.DOTALL,
+    )
+    for task_number, value in task_matches:
+        scores[f"Task {task_number}"] = float(value)
+
+    avg_match = re.search(r"FINAL SCORES:\s*Avg\s*([0-9.]+)\s*/?\s*1\.0", output_text)
+    if avg_match:
+        scores["Average"] = float(avg_match.group(1))
+    elif task_matches:
+        scores["Average"] = round(
+            sum(scores[f"Task {index}"] for index in range(1, 5)) / 4,
+            4,
+        )
     return scores
 
 async def run_model(model: str, queue: asyncio.Queue, idx: int, total: int):
@@ -56,8 +70,22 @@ async def csv_writer(queue: asyncio.Queue, total: int):
             r = await queue.get()
             writer.writerow([r["model"], r["status"], r["t1"], r["t2"], r["t3"], r["t4"], r["avg"]])
 
+def write_manifest():
+    manifest = {
+        "timestamp": TIMESTAMP,
+        "results_file": RESULTS_FILE,
+        "logs_dir": LOG_DIR,
+        "models": MODELS_TO_TEST,
+        "timeout_seconds": TIMEOUT_SECONDS,
+        "env_url": ENV_URL,
+        "api_base_url": API_BASE_URL,
+    }
+    with open(MANIFEST_FILE, "w") as handle:
+        json.dump(manifest, handle, indent=2)
+
 async def main():
     os.makedirs(LOG_DIR, exist_ok=True)
+    write_manifest()
     queue = asyncio.Queue()
     tasks = [run_model(model, queue, i+1, len(MODELS_TO_TEST)) for i, model in enumerate(MODELS_TO_TEST)]
     writer = asyncio.create_task(csv_writer(queue, len(MODELS_TO_TEST)))
@@ -65,6 +93,6 @@ async def main():
     # Run sequentially because MAX_CONCURRENT is 1
     for task in tasks: await task 
     await writer
-    print(f"\nDone! Check {RESULTS_FILE}")
+    print(f"\nDone! Check {RESULTS_FILE}, {LOG_DIR}, and {MANIFEST_FILE}")
 
 if __name__ == "__main__": asyncio.run(main())
