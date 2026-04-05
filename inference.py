@@ -8,9 +8,12 @@ import re
 sys.stdout.reconfigure(encoding="utf-8")
 from openai import OpenAI
 
-# All credentials read from environment variables — never hardcoded
-API_BASE_URL   = os.getenv("API_BASE_URL",   "https://api.openai.com/v1")
-MODEL_NAME     = os.getenv("MODEL_NAME",     "gpt-4o-mini")
+# =========================================================
+# ENVIRONMENT CONFIGURATION
+# All credentials read from environment — never hardcoded.
+# =========================================================
+API_BASE_URL   = os.getenv("API_BASE_URL",   "https://router.huggingface.co/v1")
+MODEL_NAME     = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-7B-Instruct")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ENV_URL        = os.getenv("ENV_URL",        "http://localhost:7860")
 
@@ -23,11 +26,12 @@ TASK_NAMES = {
     2: "missing_data",
     3: "boundary_fraud",
     4: "escalation_dilemma",
+    5: "document_conflict",
 }
 
 
 def _post(path: str, body: dict) -> dict:
-    """Send a JSON POST request to the environment server and return the parsed response."""
+    """POST JSON to the environment server and return parsed response."""
     data = json.dumps(body).encode("utf-8")
     req  = urllib.request.Request(
         ENV_URL + path, data=data,
@@ -38,32 +42,26 @@ def _post(path: str, body: dict) -> dict:
 
 
 def env_reset(task: int) -> dict:
-    """Reset the environment to a specific task and return the initial observation."""
     return _post("/reset", {"seed": task})
 
 
 def env_step(action_type: str, value: str) -> dict:
-    """Send one action to the environment and return the resulting observation."""
     return _post("/step", {"action": {"action_type": action_type, "value": value}})
 
 
 def log_start(task: str, env: str, model: str) -> None:
-    """Emit the [START] structured log line required by the hackathon spec."""
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error) -> None:
-    """Emit a [STEP] structured log line required by the hackathon spec."""
-    error_val = error if error else "null"
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} "
-        f"done={str(done).lower()} error={error_val}",
+        f"done={str(done).lower()} error={error if error else 'null'}",
         flush=True,
     )
 
 
 def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
-    """Emit the [END] structured log line required by the hackathon spec."""
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
@@ -72,85 +70,158 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
     )
 
 
-SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator in rural India.
-Your job is to help villagers enroll in the correct government welfare scheme.
+# =========================================================
+# SYSTEM PROMPT
+#
+# This is what a real CSC operator knows on day one of the job.
+# It contains:
+#   - Scheme eligibility rules (job training, not hints)
+#   - Available actions and their JSON format
+#   - Response format requirement with <think> block
+#
+# It does NOT contain:
+#   - Which fields are traps (agent learns via -1.0 penalty)
+#   - Which field to ask next (agent decides from missing_data)
+#   - Task-specific guidance (agent reasons from observation)
+#   - Any DECISION recommendation (agent must conclude independently)
+#   - Any hint about what profile patterns mean
+#
+# This design ensures the reward signal is the only teacher.
+# The agent improves by experiencing consequences, not by reading
+# instructions that solve the task for it.
+# =========================================================
 
-=== WORKFLOW — follow this phase order strictly ===
-PHASE 1 GATHER:   If missing_data is not empty, ask for ONE field at a time using ask_question.
-PHASE 2 IDENTIFY: Once missing_data is empty, determine the best scheme using eligibility rules.
-PHASE 3 DECIDE:   Use approve_scheme for eligible applicants, reject_applicant for ineligible ones.
-PHASE 4 SAFETY:   If you suspect data fraud or contradiction, use verify_document on PAN card first.
-                  If the PAN card reveals a contradiction — you MUST use escalate immediately.
+SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating welfare scheme applications in rural India.
+Your decisions directly affect whether vulnerable citizens receive government support.
+You must reason carefully and act only on verified information.
 
-=== AVAILABLE ACTIONS — respond ONLY with valid JSON ===
-{"action_type": "ask_question",    "value": "<field_name>"}
-  Valid field_names ONLY: age, income, occupation, has_aadhaar
+=== MANDATORY RESPONSE FORMAT ===
+You MUST respond in this exact format for every action:
+<think>
+[Your step-by-step reasoning. Check what data you have, what is missing,
+what the eligibility rules say, and what action is appropriate.]
+</think>
+{"action_type": "...", "value": "..."}
 
-{"action_type": "request_document","value": "<doc_name>"}
-  Use "pan_card" when you suspect data integrity issues.
+Never output JSON without the <think> block. Never skip reasoning.
 
-{"action_type": "approve_scheme",  "value": "<scheme_name>"}
-  Valid schemes: PMKVY, MGNREGS, PMAY
+=== AVAILABLE ACTIONS ===
 
-{"action_type": "reject_applicant","value": "<reason>"}
+{"action_type": "ask_question", "value": "<field_name>"}
+  Request information from the applicant.
+  Valid field names: age, income, occupation, has_aadhaar
 
-{"action_type": "escalate",        "value": ""}
+{"action_type": "request_document", "value": "<document_name>"}
+  Request an official document for verification.
+  aadhaar_card: verifies identity and official age
+  pan_card: verifies employment history and income source
 
-=== SCHEME ELIGIBILITY — ALL conditions must be simultaneously true ===
-PMKVY   : age 18-35, occupation mason OR carpenter, income STRICTLY < 10000
-MGNREGS : age 18-60, occupation farm_labourer, has_aadhaar = True
-PMAY    : age 21-55, any occupation, income STRICTLY < 6000, has_aadhaar = True
-REJECT if no scheme criteria are fully satisfied.
+{"action_type": "approve_scheme", "value": "<scheme_name>"}
+  Enroll the applicant in a welfare scheme.
+  Valid scheme names: PMKVY, MGNREGS, PMAY
 
-=== CRITICAL RULES ===
-NOISE FIELDS: known_profile may contain marital_status, bank_name, state_of_residence,
-number_of_children. These are TRAPS. NEVER use ask_question for these fields (-1.0 reward).
+{"action_type": "reject_applicant", "value": "<reason>"}
+  Reject the application with a clear reason.
 
-INCOME PRECISION: Thresholds are strict integers.
-income=10000 does NOT qualify for PMKVY (requires STRICTLY < 10000).
-income=6000 does NOT qualify for PMAY (requires STRICTLY < 6000).
+{"action_type": "escalate", "value": ""}
+  Hand off to a senior officer for manual review.
 
-MISSING DATA: If missing_data is not empty, ask before deciding.
-Approving with missing_data not empty costs -5.0 and ends the episode.
+=== SCHEME ELIGIBILITY RULES ===
+All conditions must be simultaneously true. Use strict integer arithmetic.
 
-ESCALATION DILEMMA: If the applicant claims to be a student but PAN card shows
-government pension deposits — this is a data integrity conflict.
-First call request_document with value "pan_card" to confirm the contradiction.
-Then immediately use escalate. Approving or rejecting is wrong (-5.0 or -3.0).
+PMKVY — Pradhan Mantri Kaushal Vikas Yojana (Rs 8,000 skill training stipend):
+  Age: 18 to 35 inclusive
+  Occupation: mason OR carpenter
+  Income: 9,999 or below (income of 10,000 does NOT qualify)
+  Aadhaar: not required
 
-Respond ONLY with a JSON object. No explanation. No markdown. Just JSON."""
+MGNREGS — Mahatma Gandhi National Rural Employment Guarantee Scheme (100 days employment):
+  Age: 18 to 60 inclusive
+  Occupation: farm_labourer ONLY
+  Aadhaar: required (has_aadhaar must be True)
+
+PMAY — Pradhan Mantri Awaas Yojana (Rs 1.2 lakh housing grant):
+  Age: 21 to 55 inclusive
+  Occupation: any
+  Income: 5,999 or below (income of 6,000 does NOT qualify)
+  Aadhaar: required (has_aadhaar must be True)
+
+When multiple schemes apply, choose the one with the highest financial benefit.
+Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
+
+=== DECISION PRINCIPLES ===
+
+1. Do not make any terminal decision (approve, reject, escalate) while
+   missing_data is not empty. Collect all required information first.
+
+2. Apply eligibility rules with exact integer comparisons.
+   income=9999 qualifies for PMKVY. income=10000 does not.
+
+3. If official documents reveal information that contradicts the stated
+   profile, the contradiction must be reviewed by a senior officer.
+
+4. If no scheme criteria are met, reject the applicant with a clear reason.
+
+5. Escalation is reserved for genuine data integrity conflicts discovered
+   through document verification — not for uncertainty or eligibility failures."""
 
 
 def get_agent_action(observation: dict, history: list):
     """
-    Call the LLM with the current observation and conversation history.
-    Extracts JSON from the response even if the model adds surrounding text.
-    Falls back to escalate if JSON parsing fails completely.
+    Query the LLM with the current observation.
+
+    The user prompt contains only raw observation data:
+    - known_profile: what the agent has gathered so far
+    - missing_data: fields still needed
+    - notification: environment feedback on last action
+    - is_terminated: episode state
+
+    No eligibility hints, no DECISION lines, no field directives.
+    The agent must reason from the observation and scheme rules alone.
+    This is the correct design for an RL training environment —
+    the reward signal teaches, not the prompt.
     """
+    profile      = observation.get('known_profile', {})
+    missing      = observation.get('missing_data', [])
+    notification = observation.get('notification', '')
+    terminated   = observation.get('is_terminated', False)
+
     obs_text = (
-        f"known_profile: {observation.get('known_profile', {})}\n"
-        f"missing_data: {observation.get('missing_data', [])}\n"
-        f"notification: {observation.get('notification', '')}\n"
-        f"is_terminated: {observation.get('is_terminated', False)}\n"
-        f"What is your next action? Respond with JSON only."
+        f"Current application state:\n"
+        f"known_profile: {profile}\n"
+        f"missing_data: {missing}\n"
+        f"notification: {notification}\n"
+        f"is_terminated: {terminated}\n\n"
+        f"Reason through this carefully in <think> tags, then output your next action as JSON."
     )
 
     messages = (
         [{"role": "system", "content": SYSTEM_PROMPT}]
-        + history[-8:]
+        + history[-10:]
         + [{"role": "user", "content": obs_text}]
     )
 
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME, messages=messages,
-            max_tokens=120, temperature=0.0,
+            # 500 tokens: allows full <think> reasoning (~300) plus JSON (~30)
+            max_tokens=500, temperature=0.0,
         )
         raw = response.choices[0].message.content.strip()
     except Exception as e:
         return {"action_type": "escalate", "value": ""}, f"API_ERROR: {e}"
 
-    # Extract JSON even if the model wraps it in markdown or prose
+    # Extract and log <think> reasoning block.
+    # Logged separately so reasoning is visible even if JSON extraction
+    # modifies the raw string. This enables future reward shaping on
+    # reasoning quality, not just terminal action correctness.
+    think_match = re.search(r'<think>(.*?)</think>', raw, re.DOTALL)
+    thinking    = think_match.group(1).strip() if think_match else ""
+    if thinking:
+        print(f"  Reasoning: {thinking[:500]}", flush=True)
+
+    # Extract JSON — handles markdown fences, think tags, prose wrapping.
+    # The regex finds the first complete JSON object in the response.
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         raw = match.group(0)
@@ -158,14 +229,23 @@ def get_agent_action(observation: dict, history: list):
     try:
         return json.loads(raw), raw
     except json.JSONDecodeError:
-        return {"action_type": "escalate", "value": ""}, raw
+        # Fallback returns ask_question, not escalate.
+        # Escalate fallback gives 0.75 on Task 4 by luck, masking JSON
+        # formatting failures as if they were correct reasoning decisions.
+        return {"action_type": "ask_question", "value": "occupation"}, raw
 
 
 def run_episode(task: int) -> float:
-    """Run one complete episode for the given task and return the grader score."""
-    task_name = TASK_NAMES[task]
+    """
+    Run one complete episode for the given task and return the grader score.
 
-    # Emit [START] log required by hackathon spec
+    Episode flow:
+    1. Reset environment to get initial observation
+    2. Loop: get agent action → step environment → observe reward
+    3. Continue until episode terminates or MAX_STEPS reached
+    4. Return grader_score from terminal observation
+    """
+    task_name = TASK_NAMES[task]
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
@@ -182,17 +262,20 @@ def run_episode(task: int) -> float:
     step         = 0
 
     print(f"\n{'='*60}", flush=True)
-    print(f"  TASK {task}/4 — {task_name.upper()}", flush=True)
+    print(f"  TASK {task}/5 — {task_name.upper()}", flush=True)
     print(f"{'='*60}", flush=True)
     print(f"  Profile : {obs.get('known_profile', {})}", flush=True)
     print(f"  Missing : {obs.get('missing_data', [])}", flush=True)
-    print(f"  Notif   : {str(obs.get('notification', ''))[:120]}", flush=True)
+    print(f"  Notif   : {str(obs.get('notification', ''))[:140]}", flush=True)
 
     while step < MAX_STEPS:
         step += 1
 
         if obs.get("is_terminated", False):
-            grader_score = obs.get("grader_score") or obs.get("metadata", {}).get("grader_score", 0.0)
+            grader_score = (
+                obs.get("grader_score")
+                or obs.get("metadata", {}).get("grader_score", 0.0)
+            )
             break
 
         action, raw_response = get_agent_action(obs, history)
@@ -214,14 +297,11 @@ def run_episode(task: int) -> float:
         notification = str(obs.get("notification", ""))
 
         rewards.append(reward)
-
         action_str = f"{action_type}({value!r})"
 
-        # Emit [STEP] log required by hackathon spec
         log_step(step=step, action=action_str, reward=reward, done=done, error=None)
-
         print(f"  Step {step:02d}: {action_str} -> reward={reward}, done={done}", flush=True)
-        print(f"           {notification[:100]}", flush=True)
+        print(f"           {notification[:120]}", flush=True)
 
         history.append({
             "role":    "user",
@@ -231,7 +311,7 @@ def run_episode(task: int) -> float:
         if done:
             grader_score = obs.get("grader_score") or obs.get("metadata", {}).get("grader_score", None)
             if grader_score is None:
-                if reward >= 10.0:  grader_score = 1.0
+                if reward >= 10.0: grader_score = 1.0
                 elif reward >= 5.0: grader_score = 1.0
                 elif reward >= 3.0: grader_score = 0.5
                 else:               grader_score = 0.0
@@ -242,7 +322,6 @@ def run_episode(task: int) -> float:
     grader_score = float(grader_score or 0.0)
     success      = grader_score >= 1.0
 
-    # Emit [END] log required by hackathon spec
     log_end(success=success, steps=step, score=grader_score, rewards=rewards)
     print(f"\n  GRADER SCORE: {grader_score:.3f} / 1.0", flush=True)
     return grader_score
@@ -250,13 +329,13 @@ def run_episode(task: int) -> float:
 
 def main():
     print(f"\n{'='*60}", flush=True)
-    print(f"  SCHEME ENV — INFERENCE EVALUATION", flush=True)
+    print(f"  SCHEME ENV — OPTION A EVALUATION", flush=True)
     print(f"  Model : {MODEL_NAME}", flush=True)
     print(f"  Env   : {ENV_URL}", flush=True)
     print(f"{'='*60}", flush=True)
 
     scores = {}
-    for task in [1, 2, 3, 4]:
+    for task in [1, 2, 3, 4, 5]:
         try:
             scores[task] = run_episode(task)
         except Exception as e:
@@ -266,15 +345,15 @@ def main():
 
     avg = sum(scores.values()) / len(scores)
 
-    # Final score block — exact format required by hackathon spec
     print(f"\n{'='*60}", flush=True)
     print(f"  FINAL GRADER SCORES", flush=True)
     print(f"{'='*60}", flush=True)
-    print(f"  Task 1 (Scheme Discovery)    : {scores[1]:.1f} / 1.0", flush=True)
-    print(f"  Task 2 (Missing Data)        : {scores[2]:.1f} / 1.0", flush=True)
-    print(f"  Task 3 (Boundary Fraud)      : {scores[3]:.1f} / 1.0", flush=True)
-    print(f"  Task 4 (Escalation Dilemma)  : {scores[4]:.1f} / 1.0", flush=True)
-    print(f"  Average                      : {avg:.2f} / 1.0", flush=True)
+    print(f"  Task 1 (Scheme Discovery)    : {scores[1]:.3f} / 1.0", flush=True)
+    print(f"  Task 2 (Missing Data)        : {scores[2]:.3f} / 1.0", flush=True)
+    print(f"  Task 3 (Boundary Fraud)      : {scores[3]:.3f} / 1.0", flush=True)
+    print(f"  Task 4 (Escalation Dilemma)  : {scores[4]:.3f} / 1.0", flush=True)
+    print(f"  Task 5 (Document Conflict)   : {scores[5]:.3f} / 1.0", flush=True)
+    print(f"  Average                      : {avg:.3f} / 1.0", flush=True)
     print(f"{'='*60}", flush=True)
 
 
