@@ -1,10 +1,6 @@
 # 📘 Reward System Enhancement Documentation
 
 
----
-
-# Scheme Environment Module Documentation
-
 ## Overview
 
 This module implements a reinforcement learning environment simulating a welfare officer responsible for evaluating applicants for government schemes.
