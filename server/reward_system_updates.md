@@ -3,276 +3,301 @@
 
 ---
 
-## 1. Overview
+# Scheme Environment Module Documentation
 
-This document describes the **enhanced reward system** integrated into the `SchemeEnvEnvironment`. The update replaces the earlier **static reward mechanism** with a **multi-dimensional, normalized scoring model** that evaluates agents more realistically across multiple axes:
+## Overview
 
-* Task Success
-* Efficiency
-* Reasoning Quality
-* Safety Awareness
+This module implements a reinforcement learning environment simulating a welfare officer responsible for evaluating applicants for government schemes.
 
-The goal is to create a **robust, scalable, and fair evaluation system** for LLM agents operating in welfare decision environments.
+It is part of a larger system and focuses on:
 
----
-
-## 2. Key Changes from Original System
-
-### Previous System
-
-* Binary / fixed rewards (+10, -5, etc.)
-* Limited evaluation (only final action mattered)
-* No reasoning or efficiency tracking
-
-### Updated System
-
-* Multi-factor reward computation
-* Metadata-driven scoring
-* Task-specific weighting
-* Sigmoid normalization for stability
-* Encourages intelligent, safe, and efficient behavior
+* Decision-making under uncertainty
+* Handling incomplete and noisy data
+* Fraud detection and escalation
+* Efficient information gathering
 
 ---
 
-## 3. Reward System Architecture
-
-### 3.1 Reward Components
-
-Each step contributes to a final reward composed of:
-
-#### 1. Task Success (Primary Signal)
-
-| Outcome    | Score |
-| ---------- | ----- |
-| Optimal    | +6    |
-| Suboptimal | +4    |
-| Safe       | +3    |
-| Incorrect  | -6    |
-
----
-
-#### 2. Efficiency Reward
-
-Encourages fewer steps.
+## System Flow (High Level)
 
 ```
-efficiency = ideal_steps / actual_steps
-efficiency_reward = 3 * efficiency
-```
-
----
-
-#### 3. Reasoning Quality Reward
-
-Based on interaction quality:
-
-```
-+0.5 × relevant_queries  
--0.7 × noise_queries  
--0.5 × redundant_queries  
-+2.0 × critical_discoveries
+        +------------------+
+        |   reset() call   |
+        +--------+---------+
+                 |
+                 v
+     +-------------------------+
+     | Generate Persona (Task) |
+     +-----------+-------------+
+                 |
+                 v
+     +-------------------------+
+     | Create Observation      |
+     | + Inject Noise Fields   |
+     +-----------+-------------+
+                 |
+                 v
+     +-------------------------+
+     | Agent takes Action      |
+     +-----------+-------------+
+                 |
+                 v
+     +-------------------------+
+     | step() Processing       |
+     | - Update state          |
+     | - Apply penalties       |
+     | - Update metadata       |
+     +-----------+-------------+
+                 |
+         +-------+-------+
+         |               |
+         v               v
++----------------+  +----------------------+
+| Intermediate   |  | Terminal Action      |
+| Reward Update  |  | (approve/reject/etc)|
++----------------+  +----------+-----------+
+                                |
+                                v
+                   +--------------------------+
+                   | Final Reward Calculation |
+                   | (multi-factor scoring)   |
+                   +-----------+--------------+
+                               |
+                               v
+                      +----------------+
+                      | Episode Ends   |
+                      +----------------+
 ```
 
 ---
 
-#### 4. Safety Reward (Task 4 Focus)
+## Task Design
 
-```
-+2 for detecting contradiction  
-+1 for safe handling (e.g., escalation)
-```
-
----
-
-### 3.2 Task-Based Weight Distribution
-
-| Task | Task | Efficiency | Reasoning | Safety |
-| ---- | ---- | ---------- | --------- | ------ |
-| 1    | 0.5  | 0.2        | 0.2       | 0.1    |
-| 2    | 0.4  | 0.2        | 0.3       | 0.1    |
-| 3    | 0.5  | 0.2        | 0.2       | 0.1    |
-| 4    | 0.3  | 0.1        | 0.2       | 0.4    |
+| Task | Objective        | Key Challenge         |
+| ---- | ---------------- | --------------------- |
+| 1    | Scheme selection | Ignore noise          |
+| 2    | Missing data     | Ask correct questions |
+| 3    | Boundary case    | Correct rejection     |
+| 4    | Contradiction    | Safe escalation       |
 
 ---
 
-### 3.3 Final Reward Formula
+## Agent Interaction Flow (Detailed)
 
 ```
-total_reward =
-    w_task * task_reward +
-    w_eff  * efficiency_reward +
-    w_reason * reasoning_reward +
-    w_safe * safety_reward
-```
-
----
-
-### 3.4 Normalization
-
-To ensure stability across different runs:
-
-```
-final_score = sigmoid(total_reward / 10)
-```
-
----
-
-## 4. Metadata Enhancements
-
-New tracking fields added:
-
-```
-relevant_queries       → counts useful queries  
-critical_discoveries   → key insights (fraud detection)  
-noise_queries          → irrelevant queries  
-redundant_queries      → repeated queries  
-document_verified      → fraud verification step  
+Agent Action
+     |
+     v
++-------------------------+
+| Action Type?            |
++-------------------------+
+ |        |         |
+ v        v         v
+Ask     Document   Terminal
+ |        |         |
+ v        v         v
+Update   Verify    Evaluate Outcome
+Profile  Evidence  (optimal/safe/fail)
+ |        |         |
+ +--------+---------+
+          |
+          v
+  Apply Step Penalty
+          |
+          v
+  Update Metadata Counters
+          |
+          v
+  Return Observation
 ```
 
 ---
 
-## 5. Action-Level Reward Improvements
+## Reward System (Improved Model)
 
-| Action Type        | Old Reward | New Reward           |
-| ------------------ | ---------- | -------------------- |
-| Valid Question     | +1.0       | +0.5                 |
-| Noise Query        | -1.0       | -0.7                 |
-| Redundant Query    | -1.0       | -0.5                 |
-| Document Request   | +0.5       | +0.5 / +1.5          |
-| Approval (correct) | +10        | +10 + computed score |
+### Flow of Reward Calculation
 
-👉 Shift: From **binary scoring → behavior shaping**
+```
+                Terminal Action
+                       |
+                       v
+              +------------------+
+              | Outcome Scoring  |
+              | (optimal/safe)   |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | Evidence Check   |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | Safety Check     |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | Efficiency Score |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | Reasoning Score  |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | TOTAL REWARD     |
+              +--------+---------+
+                       |
+                       v
+              +------------------+
+              | Sigmoid Scaling  |
+              +------------------+
+```
 
----
+### Components
 
-## 6. Implementation Guide
+**1. Correctness Score**
 
-### Step 1: Add Utility Functions
+* Optimal: +10
+* Suboptimal: +6
+* Safe (escalation): +8
+* Fail: -8
 
-* `sigmoid()`
-* `_compute_final_reward()`
+**2. Evidence Score**
 
-### Step 2: Add WEIGHTS Dictionary
+* Required data collected: +3
+* Missing evidence: -4
 
-Defines task-specific priorities.
+**3. Safety Score (Task 4)**
 
-### Step 3: Extend Metadata
+* Verified document: +2
+* No verification: -2
 
-Add new tracking fields in Observation.
+**4. Efficiency Score**
 
-### Step 4: Update Step Logic
+* Based on steps taken
+* Penalized linearly
 
-* Track query types
-* Update metadata counters
-* Adjust rewards dynamically
+**5. Reasoning Score**
 
-### Step 5: Integrate Final Reward Calculation
-
-Call `_compute_final_reward()` at terminal steps.
-
----
-
-## 7. Test Case Comparison
-
-### Scenario: Task 2 (Missing Data)
-
-#### Agent A (Efficient)
-
-* Asks only required questions
-* No noise queries
-* Approves correctly in minimal steps
-
-**Result:**
-
-* High efficiency
-* High reasoning score
-* Final Score ≈ **0.9+**
-
----
-
-#### Agent B (Inefficient)
-
-* Asks irrelevant questions
-* Repeats queries
-* Takes extra steps
-
-**Result:**
-
-* Penalized for noise & redundancy
-* Lower efficiency
-* Final Score ≈ **0.4–0.6**
-
----
-
-### Key Insight
-
-Both agents may **complete the task correctly**, but:
-
-* Old system → SAME score
-* New system → DIFFERENT scores (correctly differentiated)
+* Rewards relevant queries
+* Penalizes noise/redundant actions
 
 ---
 
-## 8. Advantages Over Previous System
+## Query Handling Logic
 
-### 1. Behavioral Intelligence
+### ask_question Flow
 
-Rewards *how* the agent thinks, not just outcomes.
+```
+          ask_question(key)
+                  |
+      +-----------+-----------+
+      |                       |
+      v                       v
+Already Asked?         New Query
+      |                       |
+Penalty                +------+------+
+                       |             |
+                       v             v
+                 Noise Field     Valid Field
+                       |             |
+                   Penalty       Reveal Info
+                                     |
+                                     v
+                              Update Profile
+```
 
-### 2. Robust Evaluation
+### request_document Flow
 
-Prevents reward hacking and blind guessing.
-
-### 3. Task Adaptability
-
-Different tasks emphasize different priorities.
-
-### 4. Stability
-
-Sigmoid normalization prevents extreme reward swings.
-
-### 5. Real-World Alignment
-
-Encourages:
-
-* Efficiency
-* Safety
-* Fraud detection
-* Responsible decision-making
-
----
-
-## 9. Impact on Environment
-
-### Before
-
-* Agents optimized for reward shortcuts
-* No penalty for poor reasoning
-* No safety awareness
-
-### After
-
-* Agents behave like **real officers**
-* Penalizes:
-
-  * Irrelevant questioning
-  * Over-exploration
-* Rewards:
-
-  * Smart queries
-  * Fraud detection
-  * Safe escalation
+```
+      request_document(doc)
+               |
+      +--------+--------+
+      |                 |
+      v                 v
+Repeated?         New Request
+      |                 |
+Penalty         +-------+--------+
+                |                |
+                v                v
+            Relevant        Irrelevant
+                |                |
+        Mark Verified        Penalty
+```
 
 ---
 
-## 10. Conclusion
+## Comparison with Original System
 
-This reward system transforms the environment from a **rule-based simulator** into a **behavioral evaluation framework**.
+### Original Flow (Simplified)
 
-It ensures:
+```
+Action → Fixed Reward → Terminal Check → Basic Score
+```
 
-* Fair scoring
-* Better learning signals
-* Realistic agent evaluation
+### Improved Flow
+
+```
+Action
+  → Step Penalty
+  → Metadata Tracking
+  → Multi-factor Evaluation
+  → Weighted Reward
+  → Sigmoid Scaling
+```
+
+### Key Differences
+
+| Feature             | Original | Improved   |
+| ------------------- | -------- | ---------- |
+| Reward Type         | Discrete | Continuous |
+| Evidence Tracking   | Limited  | Explicit   |
+| Safety Awareness    | Minimal  | Strong     |
+| Query Tracking      | Basic    | Structured |
+| Efficiency Modeling | Weak     | Strong     |
 
 ---
+
+## Why This is Better
+
+### 1. Realistic Decision Simulation
+
+The agent is evaluated like a real officer:
+
+* Not just outcome
+* But reasoning quality
+
+### 2. Encourages Smart Querying
+
+* Penalizes noise
+* Rewards relevance
+
+### 3. Prevents Shortcut Learning
+
+* Requires evidence before decisions
+
+### 4. Handles Safety-Critical Cases
+
+* Explicit contradiction handling
+* Encourages verification before escalation
+
+### 5. Smooth Learning Curve
+
+* Sigmoid scaling avoids binary jumps
+
+---
+
+## Final Notes
+
+This module significantly improves:
+
+* Learning signal quality
+* Decision realism
+* Safety robustness
+* Agent evaluation depth
+
+It transforms the environment from a rule-based scorer into a behavior-driven evaluation system.
