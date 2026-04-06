@@ -41,3 +41,20 @@ class AgentObservation(BaseObservation):
     notification: Optional[str] = Field(None)
     is_terminated: bool = Field(False)
     grader_score: Optional[float] = Field(None)
+
+
+class StepInfo(BaseModel):
+    """Typed diagnostic info for terminal grading and benchmark reporting."""
+
+    grader_score: Optional[float] = Field(
+        None,
+        description="Continuous terminal grader score between 0.0 and 1.0.",
+    )
+    noise_queries: int = Field(
+        0,
+        description="Count of irrelevant noise fields queried by the agent.",
+    )
+    redundant_queries: int = Field(
+        0,
+        description="Count of repeated or unnecessary eligibility queries.",
+    )

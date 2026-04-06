@@ -391,6 +391,14 @@ class SchemeEnvEnvironment(Environment):
             "obs":     self._obs,
         })
 
+    def _public_observation(self, obs: Observation) -> Observation:
+        """Return an agent-safe observation with internal bookkeeping stripped from metadata."""
+        public = copy.deepcopy(obs)
+        metadata = public.metadata or {}
+        allowed = ("task", "task_label", "noise_queries", "redundant_queries", "relevant_queries", "grader_score")
+        public.metadata = {key: metadata[key] for key in allowed if key in metadata}
+        return public
+
     def reset(self, seed=None, **kwargs) -> Observation:
         """
         Start a new episode.
@@ -401,7 +409,7 @@ class SchemeEnvEnvironment(Environment):
         self._state   = State(episode_id=str(uuid4()), step_count=0)
         self._obs     = _make_fresh_obs(self._task, self._persona)
         self._save_shared()
-        return self._obs
+        return self._public_observation(self._obs)
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """
@@ -743,6 +751,7 @@ class SchemeEnvEnvironment(Environment):
 
             if current_task == 4:
                 verified = obs.metadata.get("pan_verified", False)
+                base = 1.0 if verified else 0.75
                 obs.reward = 10.0 if verified else 2.5
                 score    = _compute_grader_score(
                     task              = current_task,
@@ -791,7 +800,7 @@ class SchemeEnvEnvironment(Environment):
 
         self._obs = obs
         self._save_shared()
-        return obs
+        return self._public_observation(obs)
 
     @property
     def state(self) -> State:

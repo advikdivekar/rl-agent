@@ -1,7 +1,8 @@
 """
-Scheme Env — 30-LLM Benchmark Runner
-Runs all models sequentially, produces per-run analysis after each model,
-and a full aggregate report after all 30 are done.
+Scheme Env benchmark runner.
+
+Runs the configured model suite sequentially, captures structured inference logs,
+and produces bundled leaderboard/report artifacts for each benchmark run.
 """
 
 import os
@@ -27,7 +28,7 @@ ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 MAX_CONCURRENT  = 1   # singleton environment — must stay 1
 TIMEOUT_SECONDS = 600
 
-# ── 12 models across capability tiers ────────────────────────────────────────
+# ── model suite across capability tiers ──────────────────────────────────────
 MODELS_TO_TEST = [
     "Qwen/Qwen2.5-7B-Instruct",       # confirmed working earlier
     "meta-llama/Llama-3.3-70B-Instruct", # confirmed working earlier  
@@ -401,29 +402,25 @@ async def run_model(model: str, idx: int, total: int) -> dict:
     log_filepath = LOG_DIR / f"{model.replace('/', '_')}.txt"
     env = os.environ.copy()
     env.update({
-        "MODEL_NAME":    model,
-        "API_BASE_URL":  API_BASE_URL,
-        "HF_TOKEN":      API_TOKEN,
+        "MODEL_NAME": model,
+        "API_BASE_URL": API_BASE_URL,
+        "HF_TOKEN": API_TOKEN,
         "OPENAI_API_KEY": API_TOKEN,
-        "ENV_URL":       ENV_URL,
+        "ENV_URL": ENV_URL,
     })
 
     start_time = time.time()
     try:
         proc = await asyncio.create_subprocess_exec(
-            "python", "inference.py",
+            sys.executable,
+            "inference.py",
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=TIMEOUT_SECONDS
-        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT_SECONDS)
         elapsed = round(time.time() - start_time, 1)
-
-        stdout = stdout_bytes.decode("utf-8")
-        stderr = stderr_bytes.decode("utf-8")
-
+        stdout, stderr = stdout_bytes.decode("utf-8"), stderr_bytes.decode("utf-8")
         with open(log_filepath, "w") as f:
             f.write(stdout)
             if stderr:

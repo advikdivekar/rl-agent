@@ -1,10 +1,9 @@
-import os
-import sys
 import json
+import os
+import re
+import sys
 import time
 import urllib.request
-import re
-
 
 sys.stdout.reconfigure(encoding="utf-8")
 from openai import OpenAI
@@ -13,11 +12,10 @@ from openai import OpenAI
 # ENVIRONMENT CONFIGURATION
 # All credentials read from environment — never hardcoded.
 # =========================================================
-API_BASE_URL   = os.getenv("API_BASE_URL",   "https://router.huggingface.co/v1")
-MODEL_NAME     = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-7B-Instruct")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("HF_TOKEN", "")  # FIX A1
-ENV_URL        = os.getenv("ENV_URL",        "http://localhost:7860")
-
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("HF_TOKEN", "")
+ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "800"))
 
@@ -69,7 +67,7 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"rewards={rewards_str}",
+        f"score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -78,15 +76,9 @@ SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating wel
 Your decisions directly affect whether vulnerable citizens receive government support.
 You must reason carefully and act only on verified information.
 
-=== MANDATORY RESPONSE FORMAT ===
-You MUST respond in this exact format for every action:
-<think>
-[Your step-by-step reasoning. Check what data you have, what is missing,
-what the eligibility rules say, and what action is appropriate.]
-</think>
-{"action_type": "...", "value": "..."}
-
-Never output JSON without the <think> block. Never skip reasoning.
+=== RESPONSE FORMAT ===
+Respond with exactly one JSON object and nothing else.
+Do not include markdown, code fences, or commentary.
 
 === AVAILABLE ACTIONS ===
 
@@ -146,31 +138,33 @@ Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
 4. If no scheme criteria are met, reject the applicant with a clear reason.
 
 5. Escalation is reserved for genuine data integrity conflicts discovered
-   through document verification — not for uncertainty or eligibility failures."""
+through document verification — not for uncertainty or eligibility failures."""
 
 
 def get_agent_action(observation: dict, history: list):
     """
     Query the LLM with the current observation.
+
+    The user prompt contains only raw observation data:
+    - known_profile: what the agent has gathered so far
+    - missing_data: fields still needed
+    - notification: environment feedback on last action
+    - is_terminated: episode state
+
+    No task-specific hints are injected here beyond the observation itself.
     """
     profile      = observation.get('known_profile', {})
     missing      = observation.get('missing_data', [])
     notification = observation.get('notification', '')
     terminated   = observation.get('is_terminated', False)
 
-    missing_warning = (
-        f"\n REQUIRED: missing_data is not empty — {missing}. "
-        f"You MUST use ask_question for EACH field before any terminal decision."
-        if missing else ""
-    )
     obs_text = (
         f"Current application state:\n"
         f"known_profile: {profile}\n"
         f"missing_data: {missing}\n"
         f"notification: {notification}\n"
-        f"is_terminated: {terminated}\n"
-        f"{missing_warning}\n\n"
-        f"Reason through this carefully in <think> tags, then output your next action as JSON."
+        f"is_terminated: {terminated}\n\n"
+        f"Choose the next action and respond with JSON only."
     )
 
     messages = (
@@ -186,33 +180,16 @@ def get_agent_action(observation: dict, history: list):
         )
         raw = response.choices[0].message.content.strip()
     except Exception as e:
-        return {"action_type": "escalate", "value": ""}, f"API_ERROR: {e}"
+        return None, "", f"API_ERROR: {e}"
 
-    # Extract and log <think> reasoning block.
-    think_match = re.search(r'<think>(.*?)</think>', raw, re.DOTALL)
-    thinking    = think_match.group(1).strip() if think_match else ""
-    if thinking:
-        print(f"  Reasoning: {thinking[:500]}", flush=True)
-
-    # FIX D9: use last match to avoid extracting JSON from inside <think> blocks.
-    # re.findall returns all non-nested {...} objects; we take the last one,
-    # which is always the action JSON that follows </think>.
-    # FIX D9 v2: handle long <think> blocks from QwQ/DeepSeek-R1.
-    # First extract content after </think>, then find last action JSON.
-    after_think = raw.split("</think>")[-1] if "</think>" in raw else raw
-    matches = re.findall(r'\{[^{}]*"action_type"[^{}]*\}', after_think)
-    if not matches:
-        # Fallback: search full raw output
-        matches = re.findall(r'\{[^{}]*"action_type"[^{}]*\}', raw)
-    if matches:
-        raw = matches[-1]
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if match:
+        raw = match.group(0)
 
     try:
-        return json.loads(raw), raw
+        return json.loads(raw), raw, None
     except json.JSONDecodeError:
-        # Fallback: ask_question is safer than escalate (escalate gives 0.75
-        # on Task 4 by luck, masking JSON formatting failures).
-        return {"action_type": "ask_question", "value": "occupation"}, raw
+        return None, raw, "JSON_PARSE_ERROR"
 
 
 def run_episode(task: int) -> float:
@@ -252,7 +229,15 @@ def run_episode(task: int) -> float:
             )
             break
 
-        action, raw_response = get_agent_action(obs, history)
+        action, raw_response, agent_error = get_agent_action(obs, history)
+        if agent_error:
+            print(f"  [ERROR] agent decision failed: {agent_error}", flush=True)
+            if raw_response:
+                print(f"           raw={raw_response[:160]}", flush=True)
+            log_step(step=step, action="agent_error", reward=0.0, done=True, error=agent_error)
+            grader_score = 0.0
+            break
+
         action_type = action.get("action_type", "escalate")
         value       = action.get("value", "") or ""
 
@@ -285,13 +270,14 @@ def run_episode(task: int) -> float:
         if done:
             grader_score = obs.get("grader_score") or obs.get("metadata", {}).get("grader_score", None)
             if grader_score is None:
-                # FIX D8: reward >= 5.0 now maps to 0.75, not 1.0.
-                # Correct rejection (reward=5.0) and correct escalation (reward=10.0)
-                # are now distinguishable. Previously both mapped to 1.0.
-                if reward >= 10.0:  grader_score = 1.0
-                elif reward >= 5.0: grader_score = 0.75
-                elif reward >= 3.0: grader_score = 0.5
-                else:               grader_score = 0.0
+                if reward >= 10.0:
+                    grader_score = 1.0
+                elif reward >= 5.0:
+                    grader_score = 0.75
+                elif reward >= 3.0:
+                    grader_score = 0.5
+                else:
+                    grader_score = 0.0
             break
 
         time.sleep(0.3)
@@ -333,10 +319,8 @@ def main():
     print(f"  Average                      : {avg:.3f} / 1.0", flush=True)
     print(f"{'='*60}", flush=True)
 
-    # FIX E6: structured JSON score output for benchmark_runner.py parsing.
-    # benchmark_runner can now parse these lines instead of fragile regex on print strings.
-    for t, s in scores.items():
-        print(f"SCORE_JSON {json.dumps({'task': t, 'score': s})}", flush=True)
+    for task, score in scores.items():
+        print(f"SCORE_JSON {json.dumps({'task': task, 'score': score})}", flush=True)
 
 
 if __name__ == "__main__":

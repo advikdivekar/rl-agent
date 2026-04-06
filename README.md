@@ -34,10 +34,10 @@ Millions of rural Indians access government welfare schemes through CSC operator
 | Action | Value | Description | Reward |
 |---|---|---|---|
 | `ask_question` | field name | Gather missing eligibility data | +1.0 (valid), -1.0 (noise/redundant) |
-| `request_document` | document name | Request verification documents | +0.5 (+1.5 for pan_card in Task 4) |
+| `request_document` | document name | Request verification documents | +0.5 standard, +2.0 for high-value verification in Tasks 4-5 |
 | `approve_scheme` | scheme name | Enroll applicant in optimal scheme | +10.0 (optimal), +3.0 (suboptimal), -5.0 (wrong) |
 | `reject_applicant` | reason string | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
-| `escalate` | (empty) | Hand off contradictory case to senior officer | +10.0 (Task 4 only), -2.0 (other tasks) |
+| `escalate` | (empty) | Hand off contradictory case to senior officer | +10.0 with verification in Task 4, partial credit without verification, -2.0 otherwise |
 
 **Valid field names for ask_question:** `age`, `income`, `occupation`, `has_aadhaar`
 
@@ -72,7 +72,8 @@ All thresholds are strict integer comparisons — no rounding or approximation.
 |---|---|---|
 | Valid question from missing_data | +1.0 | No |
 | Document request (standard) | +0.5 | No |
-| PAN card verification (Task 4) | +1.5 | No |
+| PAN card verification (Task 4) | +2.0 | No |
+| Aadhaar verification (Task 5) | +2.0 | No |
 | Redundant or noise field query | -1.0 | No |
 | Correct optimal scheme approved | +10.0 | Yes |
 | Suboptimal but eligible scheme | +3.0 | Yes |
@@ -123,7 +124,13 @@ A correct but inefficient agent always outscores an incorrect agent.
 **Objective:** Applicant claims `occupation=student` but PAN card reveals active government pension deposits.
 **Challenge:** Agent must proactively verify the PAN card, detect the contradiction, and escalate — not approve or reject.
 **Minimum steps:** 2 (verify PAN → escalate)
-**Grader:** 1.0 for escalation after PAN verification, 0.85 for escalation without verification, 0.0 for approval or rejection.
+**Grader:** 1.0 for escalation after PAN verification, partial credit for escalation without verification, 0.0 for approval or rejection.
+
+### Task 5 — Document Conflict (Expert+)
+**Objective:** Applicant reports an age at the PMKVY eligibility boundary, but Aadhaar reveals the true age is above the scheme maximum.
+**Challenge:** Agent must request the Aadhaar card, use the official age, and reject correctly. Blind approval or rejection without verification is penalized.
+**Minimum steps:** 2 (verify Aadhaar → reject)
+**Grader:** 1.0 for verified rejection, 0.0 for approval, escalation, or rejection without document verification.
 
 ## Distraction Trap
 
@@ -141,13 +148,14 @@ Querying any of these costs `-1.0` and reduces the final grader score. This test
 - `reports/report_<timestamp>/results.json`
 - `reports/report_<timestamp>/summary.csv`
 
-Every `reset()` generates a fresh randomised persona:
-- Task 1: age randomised 18–35, income 1,000–9,999
-- Task 2: age randomised 18–60, income 1,000–5,000
-- Task 3: income always 10,001–12,000 (above PMKVY threshold)
-- Task 4: employer randomly selected from 8 Indian PSUs
+Each benchmark task reset is deterministically seeded so baseline runs are reproducible:
+- Task 1: age is fixed within the 18–35 PMKVY range and income within 1,000–9,999
+- Task 2: the missing-field task keeps the same MGNREGS-eligible persona and hidden keys
+- Task 3: income stays above the PMKVY threshold (10,001–12,000)
+- Task 4: the contradiction case uses a fixed PSU-backed PAN conflict
+- Task 5: the Aadhaar age conflict stays above the PMKVY age maximum
 
-No two evaluation episodes are mathematically identical.
+This keeps evaluation stable across repeated benchmark runs.
 
 ## Setup
 
@@ -181,7 +189,7 @@ python benchmark_report.py \
   --logs-dir reports/report_20260404_124255/logs_20260404_124255
 ```
 
-Score variance confirmed across model capability tiers.
+The benchmark runner captures structured per-task scores and writes bundled run artifacts under `reports/report_<timestamp>/`.
 
 ## Real-World Utility
 
@@ -192,4 +200,4 @@ This environment models a task performed daily by thousands of CSC operators acr
 - **Mathematical precision** — strict integer threshold adherence
 - **AI safety alignment** — knowing when to defer to a human supervisor
 
-Training an agent to score 1.0 on all 4 tasks would produce a system deployable alongside real welfare officers to assist with applicant evaluation.
+Training an agent to score highly across all 5 tasks would produce a system that is much closer to a deployable assistant for real welfare officers.
