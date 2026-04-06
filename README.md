@@ -33,15 +33,19 @@ Millions of rural Indians access government welfare schemes through CSC operator
 
 | Action | Value | Description | Reward |
 |---|---|---|---|
-| `ask_question` | field name | Gather missing eligibility data | +1.0 (valid), -1.0 (noise/redundant) |
-| `request_document` | document name | Request verification documents | +0.5 standard, +2.0 for high-value verification in Tasks 4-5 |
+| `ask_question` | field name | Gather missing eligibility data | -0.05 valid step cost, -0.10 noise/redundant |
+| `request_document` | document name | Request verification documents | -0.05 valid step cost |
 | `approve_scheme` | scheme name | Enroll applicant in optimal scheme | +10.0 (optimal), +3.0 (suboptimal), -5.0 (wrong) |
-| `reject_applicant` | reason string | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
-| `escalate` | (empty) | Hand off contradictory case to senior officer | +10.0 with verification in Task 4, partial credit without verification, -2.0 otherwise |
+| `reject_applicant` | category | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
+| `escalate` | category or empty | Hand off contradictory case to senior officer | +10.0 with verification in Task 4, partial credit without verification, -2.0 otherwise |
 
 **Valid field names for ask_question:** `age`, `income`, `occupation`, `has_aadhaar`
 
+**Valid document names for request_document:** `aadhaar_card`, `pan_card`, `aadhaar`, `pan`
+
 **Valid scheme names for approve_scheme:** `PMKVY`, `MGNREGS`, `PMAY`
+
+**Valid decision categories for reject/escalate:** `AGE_EXCEEDED`, `INCOME_TOO_HIGH`, `NO_ELIGIBLE_SCHEME`, `MISSING_REQUIRED_DATA`, `DATA_MISMATCH`, `DOCUMENT_CONFLICT`, `MANUAL_REVIEW_REQUIRED`
 
 ## Observation Space
 
@@ -70,11 +74,9 @@ All thresholds are strict integer comparisons — no rounding or approximation.
 
 | Event | Reward | Terminal? |
 |---|---|---|
-| Valid question from missing_data | +1.0 | No |
-| Document request (standard) | +0.5 | No |
-| PAN card verification (Task 4) | +2.0 | No |
-| Aadhaar verification (Task 5) | +2.0 | No |
-| Redundant or noise field query | -1.0 | No |
+| Valid question from missing_data | -0.05 | No |
+| Valid document request | -0.05 | No |
+| Redundant or noise field query | -0.10 | No |
 | Correct optimal scheme approved | +10.0 | Yes |
 | Suboptimal but eligible scheme | +3.0 | Yes |
 | Correct rejection (Task 3) | +5.0 | Yes |
@@ -137,7 +139,7 @@ A correct but inefficient agent always outscores an incorrect agent.
 Every task injects 1–3 irrelevant fields into `known_profile`:
 `marital_status`, `state_of_residence`, `number_of_children`, `bank_name`
 
-Querying any of these costs `-1.0` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
+Querying any of these costs `-0.10` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
 
 - `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
 - `reports/report_<timestamp>/logs_<timestamp>/`
@@ -148,14 +150,14 @@ Querying any of these costs `-1.0` and reduces the final grader score. This test
 - `reports/report_<timestamp>/results.json`
 - `reports/report_<timestamp>/summary.csv`
 
-Each benchmark task reset is deterministically seeded so baseline runs are reproducible:
-- Task 1: age is fixed within the 18–35 PMKVY range and income within 1,000–9,999
-- Task 2: the missing-field task keeps the same MGNREGS-eligible persona and hidden keys
-- Task 3: income stays above the PMKVY threshold (10,001–12,000)
-- Task 4: the contradiction case uses a fixed PSU-backed PAN conflict
-- Task 5: the Aadhaar age conflict stays above the PMKVY age maximum
+Each reset keeps the same task template but generates a fresh applicant:
+- Task 1: a new PMKVY/PMAY boundary profile is sampled each episode
+- Task 2: the MGNREGS-eligible missing-field persona is regenerated with new numeric values
+- Task 3: income is resampled above the PMKVY threshold each episode
+- Task 4: the contradiction case refreshes age, income, and PSU employer
+- Task 5: the Aadhaar age conflict is regenerated above the PMKVY age maximum
 
-This keeps evaluation stable across repeated benchmark runs.
+This gives the environment replay variety while keeping the reasoning pattern for each task stable.
 
 ## Setup
 
