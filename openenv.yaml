@@ -12,6 +12,7 @@ env_variables:
   - API_BASE_URL
   - MODEL_NAME
   - HF_TOKEN
+  - OPENAI_API_KEY
 resources:
   cpu: 2
   memory_gb: 8

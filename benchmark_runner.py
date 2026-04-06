@@ -21,12 +21,7 @@ from statistics import mean, stdev
 # =========================================================
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_TOKEN = (
-    os.getenv("OPENAI_API_KEY", "")
-    or os.getenv("HF_TOKEN", "")
-    or open(".env").read().split("HF_TOKEN=")[-1].split("\n")[0].strip()
-    if os.path.exists(".env") else ""
-)
+API_TOKEN = os.getenv("OPENAI_API_KEY", "") or os.getenv("HF_TOKEN", "")
 ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 
 MAX_CONCURRENT  = 1   # singleton environment — must stay 1
@@ -34,21 +29,21 @@ TIMEOUT_SECONDS = 600
 
 # ── 12 models across capability tiers ────────────────────────────────────────
 MODELS_TO_TEST = [
-    "Qwen/Qwen2.5-7B-Instruct",
-    "meta-llama/Llama-3.1-8B-Instruct",
-    "meta-llama/Llama-3.3-70B-Instruct",
-    "Qwen/Qwen2.5-72B-Instruct",
-    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-    "LiquidAI/LFM2.5-1.2B-Instruct"
+    "Qwen/Qwen2.5-7B-Instruct",       # confirmed working earlier
+    "meta-llama/Llama-3.3-70B-Instruct", # confirmed working earlier  
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct", # ✅ Task 1 = 1.0
+    "Qwen/Qwen2.5-72B-Instruct",         # ✅ doing real reasoning
+    "Qwen/QwQ-32B",                       # reasoning model
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", # reasoning model
 ]
-
+ 
 MODEL_TIERS = {
     "Qwen/Qwen2.5-7B-Instruct":                  "1-small",
-    "meta-llama/Llama-3.1-8B-Instruct":          "1-small",
     "meta-llama/Llama-3.3-70B-Instruct":         "3-large",
-    "Qwen/Qwen2.5-72B-Instruct":                 "3-large",
     "Qwen/Qwen3-Coder-30B-A3B-Instruct":         "4-xlarge",
-    "LiquidAI/LFM2.5-1.2B-Instruct":             "1-small"
+    "Qwen/Qwen2.5-72B-Instruct":                 "3-large",
+    "Qwen/QwQ-32B":                              "4-xlarge",
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B":  "4-xlarge",
 }
 
 TASK_NAMES = {

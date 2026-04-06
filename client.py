@@ -4,21 +4,21 @@ from typing import Dict
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
-from .models import SchemeAction, SchemeObservation
+from .models import Action, Observation
 
 
-class SchemeEnv(EnvClient[SchemeAction, SchemeObservation, State]):
+class SchemeEnv(EnvClient[Action, Observation, State]):
     """Client for the Scheme Env Environment."""
 
-    def _step_payload(self, action: SchemeAction) -> Dict:
+    def _step_payload(self, action: Action) -> Dict:
         return {
             "action_type": action.action_type,
             "value": action.value,
         }
 
-    def _parse_result(self, payload: Dict) -> StepResult[SchemeObservation]:
+    def _parse_result(self, payload: Dict) -> StepResult[Observation]:
         obs_data = payload.get("observation", {})
-        observation = SchemeObservation(
+        observation = Observation(
             known_profile=obs_data.get("known_profile", {}),
             missing_data=obs_data.get("missing_data", []),
             notification=obs_data.get("notification", ""),

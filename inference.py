@@ -69,7 +69,7 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"score={score:.3f} rewards={rewards_str}",
+        f"rewards={rewards_str}",
         flush=True,
     )
 
@@ -158,12 +158,18 @@ def get_agent_action(observation: dict, history: list):
     notification = observation.get('notification', '')
     terminated   = observation.get('is_terminated', False)
 
+    missing_warning = (
+        f"\n REQUIRED: missing_data is not empty — {missing}. "
+        f"You MUST use ask_question for EACH field before any terminal decision."
+        if missing else ""
+    )
     obs_text = (
         f"Current application state:\n"
         f"known_profile: {profile}\n"
         f"missing_data: {missing}\n"
         f"notification: {notification}\n"
-        f"is_terminated: {terminated}\n\n"
+        f"is_terminated: {terminated}\n"
+        f"{missing_warning}\n\n"
         f"Reason through this carefully in <think> tags, then output your next action as JSON."
     )
 
