@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base@sha256:3e478c17bcdee6969218c03d0c1986bdb0db9abd4e763a9180b9014b3dde211a
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
