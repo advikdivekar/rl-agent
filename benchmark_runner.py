@@ -36,23 +36,19 @@ TIMEOUT_SECONDS = 600
 MODELS_TO_TEST = [
     "Qwen/Qwen2.5-7B-Instruct",
     "meta-llama/Llama-3.1-8B-Instruct",
-    "Qwen/QwQ-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-72B-Instruct",
-    "google/gemma-4-31B-it",
-    "prism-ml/Bonsai-8B-mlx-1bit",
-    'sentence-transformers/all-mpnet-base-v2'
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "LiquidAI/LFM2.5-1.2B-Instruct"
 ]
 
 MODEL_TIERS = {
     "Qwen/Qwen2.5-7B-Instruct":                  "1-small",
     "meta-llama/Llama-3.1-8B-Instruct":          "1-small",
-    "Qwen/QwQ-32B":                               "2-medium",
     "meta-llama/Llama-3.3-70B-Instruct":         "3-large",
     "Qwen/Qwen2.5-72B-Instruct":                 "3-large",
-    "google/gemma-4-31B-it":                     "4-xlarge",
-    "prism-ml/Bonsai-8B-mlx-1bit":               "4-xlarge",
-    'sentence-transformers/all-mpnet-base-v2':   "4-xlarge",
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct":         "4-xlarge",
+    "LiquidAI/LFM2.5-1.2B-Instruct":             "1-small"
 }
 
 TASK_NAMES = {
