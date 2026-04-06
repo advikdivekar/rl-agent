@@ -16,9 +16,9 @@ from models import Action, Observation
 # Maximum steps per episode — generous enough for careful agents but not infinite
 MAX_STEPS = 20
 
-# Keep non-terminal shaping small so agents optimize for correct terminal
+# Keep non-terminal shaping flat so agents optimize for correct terminal
 # outcomes instead of reward-farming with unnecessary information gathering.
-VALID_STEP_PENALTY = -0.05
+VALID_STEP_PENALTY = 0.0
 INVALID_STEP_PENALTY = -0.10
 
 # Noise fields injected into every profile — querying them wastes steps and costs reward

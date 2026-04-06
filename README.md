@@ -33,8 +33,8 @@ Millions of rural Indians access government welfare schemes through CSC operator
 
 | Action | Value | Description | Reward |
 |---|---|---|---|
-| `ask_question` | field name | Gather missing eligibility data | -0.05 valid step cost, -0.10 noise/redundant |
-| `request_document` | document name | Request verification documents | -0.05 valid step cost |
+| `ask_question` | field name | Gather missing eligibility data | 0.0 valid step, -0.10 noise/redundant |
+| `request_document` | document name | Request verification documents | 0.0 valid step |
 | `approve_scheme` | scheme name | Enroll applicant in optimal scheme | +10.0 (optimal), +3.0 (suboptimal), -5.0 (wrong) |
 | `reject_applicant` | category | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
 | `escalate` | category or empty | Hand off contradictory case to senior officer | +10.0 (Task 4 only), -2.0 (other tasks) |
@@ -74,8 +74,8 @@ All thresholds are strict integer comparisons — no rounding or approximation.
 
 | Event | Reward | Terminal? |
 |---|---|---|
-| Valid question from missing_data | -0.05 | No |
-| Valid document request | -0.05 | No |
+| Valid question from missing_data | 0.0 | No |
+| Valid document request | 0.0 | No |
 | Redundant or noise field query | -0.10 | No |
 | Correct optimal scheme approved | +10.0 | Yes |
 | Suboptimal but eligible scheme | +3.0 | Yes |
