@@ -1,7 +1,17 @@
 spec_version: 1
 name: scheme_env
+version: "0.2.0"
+description: "Indian CSC welfare officer RL environment — 5 tasks, deterministic graders"
 type: space
 runtime: fastapi
 app: server.app:app
 port: 7860
-
+max_steps: 20
+health_check: /health
+env_variables:
+  - API_BASE_URL
+  - MODEL_NAME
+  - HF_TOKEN
+resources:
+  cpu: 2
+  memory_gb: 8

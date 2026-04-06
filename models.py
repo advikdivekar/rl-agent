@@ -33,3 +33,11 @@ class Observation(BaseObservation):
 
     # Internal episode tracking — noise query count, redundant query count, task id
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentObservation(BaseObservation):
+    known_profile: Dict[str, Any] = Field(default_factory=dict)
+    missing_data: List[str] = Field(default_factory=list)
+    notification: Optional[str] = Field(None)
+    is_terminated: bool = Field(False)
+    grader_score: Optional[float] = Field(None)

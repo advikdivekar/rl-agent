@@ -5,6 +5,7 @@ import time
 import urllib.request
 import re
 
+
 sys.stdout.reconfigure(encoding="utf-8")
 from openai import OpenAI
 
@@ -14,10 +15,13 @@ from openai import OpenAI
 # =========================================================
 API_BASE_URL   = os.getenv("API_BASE_URL",   "https://router.huggingface.co/v1")
 MODEL_NAME     = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-7B-Instruct")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("HF_TOKEN", "")  # FIX A1
 ENV_URL        = os.getenv("ENV_URL",        "http://localhost:7860")
 
-client    = OpenAI(base_url=API_BASE_URL, api_key=OPENAI_API_KEY)
+INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "800"))
+
+client = OpenAI(base_url=API_BASE_URL, api_key=OPENAI_API_KEY)
 BENCHMARK = "scheme_env"
 MAX_STEPS = 20
 
@@ -69,27 +73,6 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
         flush=True,
     )
 
-
-# =========================================================
-# SYSTEM PROMPT
-#
-# This is what a real CSC operator knows on day one of the job.
-# It contains:
-#   - Scheme eligibility rules (job training, not hints)
-#   - Available actions and their JSON format
-#   - Response format requirement with <think> block
-#
-# It does NOT contain:
-#   - Which fields are traps (agent learns via -1.0 penalty)
-#   - Which field to ask next (agent decides from missing_data)
-#   - Task-specific guidance (agent reasons from observation)
-#   - Any DECISION recommendation (agent must conclude independently)
-#   - Any hint about what profile patterns mean
-#
-# This design ensures the reward signal is the only teacher.
-# The agent improves by experiencing consequences, not by reading
-# instructions that solve the task for it.
-# =========================================================
 
 SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating welfare scheme applications in rural India.
 Your decisions directly affect whether vulnerable citizens receive government support.
@@ -169,17 +152,6 @@ Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
 def get_agent_action(observation: dict, history: list):
     """
     Query the LLM with the current observation.
-
-    The user prompt contains only raw observation data:
-    - known_profile: what the agent has gathered so far
-    - missing_data: fields still needed
-    - notification: environment feedback on last action
-    - is_terminated: episode state
-
-    No eligibility hints, no DECISION lines, no field directives.
-    The agent must reason from the observation and scheme rules alone.
-    This is the correct design for an RL training environment —
-    the reward signal teaches, not the prompt.
     """
     profile      = observation.get('known_profile', {})
     missing      = observation.get('missing_data', [])
@@ -204,46 +176,36 @@ def get_agent_action(observation: dict, history: list):
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME, messages=messages,
-            # 500 tokens: allows full <think> reasoning (~300) plus JSON (~30)
-            max_tokens=500, temperature=0.0,
+            max_tokens=MAX_TOKENS, temperature=INFERENCE_TEMPERATURE,
         )
         raw = response.choices[0].message.content.strip()
     except Exception as e:
         return {"action_type": "escalate", "value": ""}, f"API_ERROR: {e}"
 
     # Extract and log <think> reasoning block.
-    # Logged separately so reasoning is visible even if JSON extraction
-    # modifies the raw string. This enables future reward shaping on
-    # reasoning quality, not just terminal action correctness.
     think_match = re.search(r'<think>(.*?)</think>', raw, re.DOTALL)
     thinking    = think_match.group(1).strip() if think_match else ""
     if thinking:
         print(f"  Reasoning: {thinking[:500]}", flush=True)
 
-    # Extract JSON — handles markdown fences, think tags, prose wrapping.
-    # The regex finds the first complete JSON object in the response.
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
-    if match:
-        raw = match.group(0)
+    # FIX D9: use last match to avoid extracting JSON from inside <think> blocks.
+    # re.findall returns all non-nested {...} objects; we take the last one,
+    # which is always the action JSON that follows </think>.
+    matches = re.findall(r'\{[^{}]*\}', raw)
+    if matches:
+        raw = matches[-1]
 
     try:
         return json.loads(raw), raw
     except json.JSONDecodeError:
-        # Fallback returns ask_question, not escalate.
-        # Escalate fallback gives 0.75 on Task 4 by luck, masking JSON
-        # formatting failures as if they were correct reasoning decisions.
+        # Fallback: ask_question is safer than escalate (escalate gives 0.75
+        # on Task 4 by luck, masking JSON formatting failures).
         return {"action_type": "ask_question", "value": "occupation"}, raw
 
 
 def run_episode(task: int) -> float:
     """
     Run one complete episode for the given task and return the grader score.
-
-    Episode flow:
-    1. Reset environment to get initial observation
-    2. Loop: get agent action → step environment → observe reward
-    3. Continue until episode terminates or MAX_STEPS reached
-    4. Return grader_score from terminal observation
     """
     task_name = TASK_NAMES[task]
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
@@ -311,8 +273,11 @@ def run_episode(task: int) -> float:
         if done:
             grader_score = obs.get("grader_score") or obs.get("metadata", {}).get("grader_score", None)
             if grader_score is None:
-                if reward >= 10.0: grader_score = 1.0
-                elif reward >= 5.0: grader_score = 1.0
+                # FIX D8: reward >= 5.0 now maps to 0.75, not 1.0.
+                # Correct rejection (reward=5.0) and correct escalation (reward=10.0)
+                # are now distinguishable. Previously both mapped to 1.0.
+                if reward >= 10.0:  grader_score = 1.0
+                elif reward >= 5.0: grader_score = 0.75
                 elif reward >= 3.0: grader_score = 0.5
                 else:               grader_score = 0.0
             break
@@ -355,6 +320,11 @@ def main():
     print(f"  Task 5 (Document Conflict)   : {scores[5]:.3f} / 1.0", flush=True)
     print(f"  Average                      : {avg:.3f} / 1.0", flush=True)
     print(f"{'='*60}", flush=True)
+
+    # FIX E6: structured JSON score output for benchmark_runner.py parsing.
+    # benchmark_runner can now parse these lines instead of fragile regex on print strings.
+    for t, s in scores.items():
+        print(f"SCORE_JSON {json.dumps({'task': t, 'score': s})}", flush=True)
 
 
 if __name__ == "__main__":
