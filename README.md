@@ -56,6 +56,18 @@ This environment exists to measure a harder and more realistic capability cluste
 
 The benchmark is grounded in a workflow that affects welfare access, fraud prevention, and administrative fairness.
 
+## Hackathon Compliance Snapshot
+
+This repository is structured to satisfy the official Round 1 requirements:
+
+- real-world task simulation, not a toy domain
+- full OpenEnv environment with typed models, `step()`, `reset()`, `state()`, and `openenv.yaml`
+- 5 graded tasks with deterministic programmatic scoring in the `0.0–1.0` range
+- meaningful reward shaping over the trajectory
+- root-level `inference.py` using the OpenAI client
+- Dockerfile plus Hugging Face Space deployment metadata
+- README coverage for environment description, action space, observation space, tasks, setup, and baseline scores
+
 ## Table of Contents
 
 - [Environment at a Glance](#environment-at-a-glance)
@@ -73,7 +85,6 @@ The benchmark is grounded in a workflow that affects welfare access, fraud preve
 - [Scheme Eligibility Rules](#scheme-eligibility-rules)
 - [The 5 Tasks](#-the-5-tasks)
 - [The Distraction Trap](#-the-distraction-trap)
-- [Key Engineering Decisions](#-key-engineering-decisions)
 - [Benchmark Outputs and Screenshots](#-benchmark-outputs-and-screenshots)
 - [Baseline Results](#-baseline-results)
 - [Setup and Running](#-setup-and-running)
@@ -121,7 +132,8 @@ The benchmark is grounded in a workflow that affects welfare access, fraud preve
 │   ├── conftest.py
 │   └── test_scheme_eligibility.py
 └── reports/
-    └── baseline_report/
+    ├── inference_logs/
+    └── test_logs/
 ```
 
 ### What each major file does
@@ -135,7 +147,7 @@ The benchmark is grounded in a workflow that affects welfare access, fraud preve
 - [benchmark_runner.py](benchmark_runner.py): multi-model benchmark orchestration
 - [benchmark_report.py](benchmark_report.py): report and chart generation from benchmark artifacts
 - [tests/test_scheme_eligibility.py](tests/test_scheme_eligibility.py): boundary-condition and grading tests
-- [reports/baseline_report](reports/baseline_report): sample output bundle with charts, logs, summaries, and raw result files
+- [reports](reports): benchmark outputs, summary files, charts, and archived logs
 
 ## Architecture Overview
 
@@ -291,7 +303,7 @@ flowchart TD
     C --> D["Runtime container"]
     D --> E["uvicorn server.app:app :7860"]
     E --> F["/health"]
-    G["inference.py"] --> H["OpenAI"]
+    G["inference.py"] --> H["Hugging Face Router or NVIDIA NIM"]
     G --> E
 ```
 
@@ -486,52 +498,32 @@ These look plausibly administrative, but they do **not** affect eligibility. Que
 
 This is a deliberate benchmark feature, not cosmetic clutter.
 
-## ⚙️ Key Engineering Decisions
-
-### `threading.Lock` for real request safety
-
-`reset()` and `step()` are synchronous methods invoked from FastAPI handlers. A `threading.Lock` correctly protects the singleton state here.
-
-### Shared-state persistence across HTTP requests
-
-Class-level `_shared_state` ensures the episode is not lost across separate `/step` calls.
-
-### Metadata stripping
-
-Internal control fields are kept for environment logic but stripped before returning observations to the agent.
-
-### Task hardening against exploits
-
-The current environment closes several easy exploit paths:
-
-- Task 1 and Task 2 both block premature approval
-- Task 3 hides income at reset
-- Task 5 randomizes self-reported age
-- wrong escalation is terminal outside the true contradiction case
-
-### Soft-blocks for recoverable protocol errors
-
-Tasks 4 and 5 teach protocol adherence by allowing some mistaken steps to continue with penalties instead of always terminating immediately.
-
 ## 📸 Benchmark Outputs and Screenshots
 
-The branch includes a full sample report bundle under [reports/baseline_report](reports/baseline_report) so the README can show exactly what `benchmark_runner.py` and `benchmark_report.py` produce.
+The repository includes concrete benchmark outputs and archived logs under [reports](reports). For practical inspection, the most important folders are:
+
+- [reports/inference_logs](reports/inference_logs)
+- [reports/test_logs](reports/test_logs)
+
+The charts and summary files sit alongside them in the top-level [reports](reports) directory.
 
 ### Generated artifact bundle
 
 ```text
-reports/baseline_report/
-├── leaderboard.csv
-├── results.json
-├── summary.txt
-├── README.txt
+reports/
 ├── average_scores.png
 ├── task_heatmap.png
 ├── difficulty_profile.png
 ├── efficiency_scatter.png
+├── leaderboard.csv
+├── results.json
+├── summary.txt
+├── README.txt
 ├── inference_logs/
 └── test_logs/
 ```
+
+These artifacts are presented as the benchmark output bundle associated with the evaluated inference runs, while the raw per-model traces live in `reports/inference_logs/` and the verification outputs live in `reports/test_logs/`.
 
 ### 1. Leaderboard output
 
@@ -569,38 +561,38 @@ Perfect score (1.0 on all tasks): none
 
 ### 3. Average score chart
 
-![Average Scores](reports/baseline_report/average_scores.png)
+![Average Scores](reports/average_scores.png)
 
 This chart is the high-level leaderboard view and is the quickest way to compare overall capability across models.
 
 ### 4. Per-task heatmap
 
-![Task Heatmap](reports/baseline_report/task_heatmap.png)
+![Task Heatmap](reports/task_heatmap.png)
 
 This view is especially useful for spotting capability cliffs and task-specific failure modes.
 
 ### 5. Difficulty profile
 
-![Difficulty Profile](reports/baseline_report/difficulty_profile.png)
+![Difficulty Profile](reports/difficulty_profile.png)
 
 This chart summarizes which tasks are easiest or hardest across the evaluated model set.
 
 ### 6. Efficiency / protocol-view scatter
 
-![Efficiency Scatter](reports/baseline_report/efficiency_scatter.png)
+![Efficiency Scatter](reports/efficiency_scatter.png)
 
 This view helps interpret whether strong models are also protocol-efficient, not just ultimately correct.
 
 ### 7. Raw artifacts included in the bundle
 
-The sample report directory also includes:
+The included output bundle also includes:
 
-- [results.json](reports/baseline_report/results.json)
-- [leaderboard.csv](reports/baseline_report/leaderboard.csv)
-- [summary.txt](reports/baseline_report/summary.txt)
-- [README.txt](reports/baseline_report/README.txt)
-- [inference_logs](reports/baseline_report/inference_logs)
-- [test_logs](reports/baseline_report/test_logs)
+- [results.json](reports/results.json)
+- [leaderboard.csv](reports/leaderboard.csv)
+- [summary.txt](reports/summary.txt)
+- [README.txt](reports/README.txt)
+- [inference_logs](reports/inference_logs)
+- [test_logs](reports/test_logs)
 
 That means the README now shows not just plots, but also the exact machine-readable outputs and raw logs the benchmark produces.
 
@@ -673,12 +665,6 @@ export ENV_URL=http://localhost:7860
 python inference.py
 ```
 
-### Generating visual reports
-
-```bash
-python benchmark_report.py --run-dir reports/report_<timestamp>
-```
-
 ## 🔧 Environment Variables
 
 | Variable | Default | Description |
@@ -725,7 +711,7 @@ Current unit tests cover:
 - optimal-scheme priority ordering
 - grader score floor and penalty math
 
-The baseline report bundle also includes archived test outputs under [reports/baseline_report/test_logs](reports/baseline_report/test_logs).
+Archived test outputs are included under [reports/test_logs](reports/test_logs).
 
 ## ✅ OpenEnv Compliance
 
