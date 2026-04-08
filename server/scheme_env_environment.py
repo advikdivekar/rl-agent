@@ -428,17 +428,28 @@ class SchemeEnvEnvironment(Environment):
         })
 
     def reset(self, seed=None, **kwargs) -> Observation:
-        """
-        Start a new episode.
-        seed=1-5 selects a specific task; no seed cycles 1→2→3→4→5→1.
-        """
         with SchemeEnvEnvironment._state_lock:
-            self._task    = seed if seed in (1, 2, 3, 4, 5) else (self._task % 5) + 1
-            self._persona = generate_dynamic_persona(self._task)
-            self._state   = State(episode_id=str(uuid4()), step_count=0)
-            self._obs     = _make_fresh_obs(self._task, self._persona)
-            self._save_shared()
-            return self._obs
+            # FIX 1: Guaranteed PRNG determinism for benchmark evaluators
+            if seed is not None:
+                random.seed(seed)
+                # If seed corresponds exactly to a task number, force it.
+                # Otherwise, use the newly seeded RNG to pick a deterministic task.
+                try:
+                    seed_int = int(seed)
+                    if seed_int in (1, 2, 3, 4, 5):
+                        self._task = seed_int
+                    else:
+                        self._task = random.randint(1, 5)
+                except (ValueError, TypeError):
+                    self._task = random.randint(1, 5)
+            else:
+                self._task = (self._task % 5) + 1
+                    
+                self._persona = generate_dynamic_persona(self._task)
+                self._state   = State(episode_id=str(uuid4()), step_count=0)
+                self._obs     = _make_fresh_obs(self._task, self._persona)
+                self._save_shared()
+                return self._obs
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """
@@ -527,7 +538,7 @@ class SchemeEnvEnvironment(Environment):
                     obs.reward = VALID_STEP_PENALTY
 
                 elif current_task == 5 and "aadhaar" in doc:
-                    true_age = persona.get("_aadhaar_age", "36")
+                    true_age = str(persona.get("_aadhaar_age", persona.get("age", "36")))
                     obs.metadata["aadhaar_verified"]     = True
                     obs.metadata["document_verified"]    = True
                     obs.metadata["critical_discoveries"] += 1
