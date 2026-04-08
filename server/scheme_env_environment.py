@@ -429,27 +429,25 @@ class SchemeEnvEnvironment(Environment):
 
     def reset(self, seed=None, **kwargs) -> Observation:
         with SchemeEnvEnvironment._state_lock:
-            # FIX 1: Guaranteed PRNG determinism for benchmark evaluators
             if seed is not None:
-                random.seed(seed)
-                # If seed corresponds exactly to a task number, force it.
-                # Otherwise, use the newly seeded RNG to pick a deterministic task.
                 try:
                     seed_int = int(seed)
                     if seed_int in (1, 2, 3, 4, 5):
                         self._task = seed_int
                     else:
+                        random.seed(seed)
                         self._task = random.randint(1, 5)
                 except (ValueError, TypeError):
-                    self._task = random.randint(1, 5)
+                    self._task = (self._task % 5) + 1
             else:
                 self._task = (self._task % 5) + 1
-                    
-                self._persona = generate_dynamic_persona(self._task)
-                self._state   = State(episode_id=str(uuid4()), step_count=0)
-                self._obs     = _make_fresh_obs(self._task, self._persona)
-                self._save_shared()
-                return self._obs
+
+        self._persona = generate_dynamic_persona(self._task)
+        self._state   = State(episode_id=str(uuid4()), step_count=0)
+        self._obs     = _make_fresh_obs(self._task, self._persona)
+        self._save_shared()
+        return self._obs
+            
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """

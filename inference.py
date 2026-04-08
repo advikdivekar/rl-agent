@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 from typing import Optional
 from urllib.parse import urlparse
@@ -17,6 +18,7 @@ if load_dotenv is not None:
     load_dotenv()
 
 sys.stdout.reconfigure(encoding="utf-8")
+
 from openai import OpenAI
 
 # =========================================================
@@ -26,14 +28,16 @@ from openai import OpenAI
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 
+# Optional — if using from_docker_image()
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1500"))
 BENCHMARK = "scheme_env"
 MAX_STEPS = 20
-N_REPEATS = int(os.getenv("N_REPEATS", "3"))  # episodes per task for score averaging
+N_REPEATS = int(os.getenv("N_REPEATS", "3"))
 
 TASK_NAMES = {
     1: "scheme_discovery",
@@ -50,12 +54,8 @@ def normalize_provider_config(base_url: str, model_name: str) -> tuple[str, str]
     Router endpoint so older env var examples remain usable.
     """
     parsed = urlparse(base_url)
+
     if parsed.netloc in {"huggingface.co", "www.huggingface.co"}:
-        print(
-            "[CONFIG] Hugging Face website URL detected. "
-            "Rewriting to https://router.huggingface.co/v1",
-            flush=True,
-        )
         return "https://router.huggingface.co/v1", model_name
 
     if parsed.netloc == "api-inference.huggingface.co" and "/models/" in parsed.path:
@@ -69,12 +69,6 @@ def normalize_provider_config(base_url: str, model_name: str) -> tuple[str, str]
             normalized_model = normalized_model or inferred_model
         except ValueError:
             pass
-
-        print(
-            "[CONFIG] Deprecated Hugging Face Inference API URL detected. "
-            "Rewriting to https://router.huggingface.co/v1",
-            flush=True,
-        )
         return "https://router.huggingface.co/v1", normalized_model
 
     return base_url, model_name
@@ -84,23 +78,30 @@ API_BASE_URL, MODEL_NAME = normalize_provider_config(API_BASE_URL, MODEL_NAME)
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 
-if "huggingface.co" in API_BASE_URL and not HF_TOKEN:
-    print(
-        "[CONFIG] Missing HF_TOKEN for the configured endpoint. "
-        "Set HF_TOKEN in your environment or .env file.",
-        flush=True,
-    )
-
-
 def _post(path: str, body: dict) -> dict:
     """POST JSON to the environment server and return parsed response."""
     data = json.dumps(body).encode("utf-8")
-    req  = urllib.request.Request(
-        ENV_URL + path, data=data,
-        headers={"Content-Type": "application/json"}, method="POST",
+    req = urllib.request.Request(
+        ENV_URL + path,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            pass
+
+        if error_body:
+            raise RuntimeError(
+                f"{e} while POST {path} to {ENV_URL}. Response body: {error_body}"
+            ) from e
+        raise RuntimeError(f"{e} while POST {path} to {ENV_URL}") from e
 
 
 def env_reset(task: int) -> dict:
@@ -232,15 +233,14 @@ def _parse_action_response(raw: str) -> tuple[Optional[dict], Optional[str]]:
         return None, "JSON_PARSE_ERROR"
 
 
-# No scaffolding — model must reason about document verification from system prompt rules alone.
 def get_agent_action(observation: dict, history: list):
     """
     Query the LLM with the current observation.
     """
-    profile      = observation.get('known_profile', {})
-    missing      = observation.get('missing_data', [])
-    notification = observation.get('notification', '')
-    terminated   = observation.get('is_terminated', False)
+    profile = observation.get("known_profile", {})
+    missing = observation.get("missing_data", [])
+    notification = observation.get("notification", "")
+    terminated = observation.get("is_terminated", False)
 
     obs_text = (
         f"Current application state:\n"
@@ -259,8 +259,10 @@ def get_agent_action(observation: dict, history: list):
 
     try:
         response = client.chat.completions.create(
-            model=MODEL_NAME, messages=messages,
-            max_tokens=MAX_TOKENS, temperature=INFERENCE_TEMPERATURE,
+            model=MODEL_NAME,
+            messages=messages,
+            max_tokens=MAX_TOKENS,
+            temperature=INFERENCE_TEMPERATURE,
         )
         raw = response.choices[0].message.content.strip()
     except Exception as e:
@@ -287,15 +289,15 @@ def run_episode(task: int) -> float:
         log_end(success=False, steps=0, score=0.0, rewards=[])
         return 0.0
 
-    obs          = result.get("observation", result)
+    obs = result.get("observation", result)
     grader_score = 0.0
-    rewards      = []
-    history      = []
-    step         = 0
+    rewards = []
+    history = []
+    step = 0
 
-    print(f"\n{'='*60}", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
     print(f"  TASK {task}/5 — {task_name.upper()}", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
     print(f"  Profile : {obs.get('known_profile', {})}", flush=True)
     print(f"  Missing : {obs.get('missing_data', [])}", flush=True)
     print(f"  Notif   : {str(obs.get('notification', ''))[:140]}", flush=True)
@@ -315,41 +317,60 @@ def run_episode(task: int) -> float:
             print(f"  [ERROR] agent decision failed: {agent_error}", flush=True)
             if raw_response:
                 print(f"           raw={raw_response[:200]}", flush=True)
-            log_step(step=step, action="agent_error", reward=0.0, done=True, error=agent_error)
+            log_step(
+                step=step,
+                action="agent_error",
+                reward=0.0,
+                done=True,
+                error=agent_error,
+            )
             grader_score = 0.0
             break
 
         action_type = action.get("action_type", "escalate")
-        value       = action.get("value", "") or ""
+        value = action.get("value", "") or ""
 
         history.append({"role": "assistant", "content": raw_response})
 
         try:
             step_result = env_step(action_type, value)
         except Exception as e:
-            log_step(step=step, action=f"{action_type}({value!r})",
-                     reward=0.0, done=False, error=str(e))
+            log_step(
+                step=step,
+                action=f"{action_type}({value!r})",
+                reward=0.0,
+                done=False,
+                error=str(e),
+            )
             continue
 
-        obs          = step_result.get("observation", step_result)
-        reward       = step_result.get("reward", 0.0)
-        done         = step_result.get("done", False)
+        obs = step_result.get("observation", step_result)
+        reward = step_result.get("reward", 0.0)
+        done = step_result.get("done", False)
         notification = str(obs.get("notification", ""))
 
         rewards.append(reward)
         action_str = f"{action_type}({value!r})"
 
         log_step(step=step, action=action_str, reward=reward, done=done, error=None)
-        print(f"  Step {step:02d}: {action_str} -> reward={reward}, done={done}", flush=True)
+        print(
+            f"  Step {step:02d}: {action_str} -> reward={reward}, done={done}",
+            flush=True,
+        )
         print(f"           {notification[:120]}", flush=True)
 
-        history.append({
-            "role":    "user",
-            "content": f"reward={reward}, notification={notification}",
-        })
+        history.append(
+            {
+                "role": "user",
+                "content": f"reward={reward}, notification={notification}",
+            }
+        )
 
         if done:
-            grader_score = obs.get("grader_score") or obs.get("metadata", {}).get("grader_score", None)
+            grader_score = (
+                obs.get("grader_score")
+                or obs.get("metadata", {}).get("grader_score", None)
+            )
             if grader_score is None:
                 if reward >= 10.0:
                     grader_score = 1.0
@@ -364,7 +385,7 @@ def run_episode(task: int) -> float:
         time.sleep(0.3)
 
     grader_score = float(grader_score or 0.0)
-    success      = grader_score >= 1.0
+    success = grader_score >= 1.0
 
     log_end(success=success, steps=step, score=grader_score, rewards=rewards)
     print(f"\n  GRADER SCORE: {grader_score:.3f} / 1.0", flush=True)
@@ -374,17 +395,16 @@ def run_episode(task: int) -> float:
 def main():
     import statistics
 
-    print(f"\n{'='*60}", flush=True)
-    print(f"  SCHEME ENV — OPTION A EVALUATION", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
+    print("  SCHEME ENV — OPTION A EVALUATION", flush=True)
     print(f"  Model    : {MODEL_NAME}", flush=True)
     print(f"  Env      : {ENV_URL}", flush=True)
     print(f"  Repeats  : {N_REPEATS} per task", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
-    # Run each task N_REPEATS times sequentially, then average.
-    # env_reset is called at the start of each run_episode, so no manual reset needed.
     mean_scores = {}
-    std_scores  = {}
+    std_scores = {}
+
     for task in [1, 2, 3, 4, 5]:
         repeat_scores = []
         for repeat in range(1, N_REPEATS + 1):
@@ -396,9 +416,11 @@ def main():
                 s = 0.0
             repeat_scores.append(s)
             time.sleep(1)
+
         mean_scores[task] = round(sum(repeat_scores) / len(repeat_scores), 4)
-        std_scores[task]  = round(
-            statistics.stdev(repeat_scores) if len(repeat_scores) > 1 else 0.0, 4
+        std_scores[task] = round(
+            statistics.stdev(repeat_scores) if len(repeat_scores) > 1 else 0.0,
+            4,
         )
 
     avg = sum(mean_scores.values()) / len(mean_scores)
@@ -410,9 +432,10 @@ def main():
         4: "Escalation Dilemma ",
         5: "Document Conflict  ",
     }
-    print(f"\n{'='*60}", flush=True)
+
+    print(f"\n{'=' * 60}", flush=True)
     print(f"  FINAL GRADER SCORES  (mean ± std over {N_REPEATS} repeats)", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
     for t in [1, 2, 3, 4, 5]:
         print(
             f"  Task {t} ({task_labels[t]}): "
@@ -420,9 +443,8 @@ def main():
             flush=True,
         )
     print(f"  Average                      : {avg:.3f} / 1.0", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
-    # Structured JSON output for benchmark_runner.py parsing.
     for t in [1, 2, 3, 4, 5]:
         print(f"SCORE_JSON {json.dumps({'task': t, 'score': mean_scores[t]})}", flush=True)
         print(f"STD_JSON {json.dumps({'task': t, 'std': std_scores[t]})}", flush=True)
