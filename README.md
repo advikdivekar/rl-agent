@@ -1,4 +1,6 @@
+---
 title: Scheme Enrollment Env
+emoji: 🏢 
 colorFrom: blue
 colorTo: green
 sdk: docker
