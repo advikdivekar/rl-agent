@@ -500,12 +500,12 @@ This is a deliberate benchmark feature, not cosmetic clutter.
 
 ## 📸 Benchmark Outputs and Screenshots
 
-The repository includes concrete benchmark outputs and archived logs under [reports](reports). For practical inspection, the most important folders are:
+Running the evaluation flow produces benchmark outputs under `reports/`. In practice, the most important generated directories are:
 
-- [reports/inference_logs](reports/inference_logs)
-- [reports/test_logs](reports/test_logs)
+- `reports/inference_logs/`
+- `reports/test_logs/`
 
-The charts and summary files sit alongside them in the top-level [reports](reports) directory.
+The top-level `reports/` directory also holds charts and summary files generated from the evaluation run.
 
 ### Generated artifact bundle
 
@@ -523,7 +523,7 @@ reports/
 └── test_logs/
 ```
 
-These artifacts are presented as the benchmark output bundle associated with the evaluated inference runs, while the raw per-model traces live in `reports/inference_logs/` and the verification outputs live in `reports/test_logs/`.
+These artifacts represent the benchmark output bundle associated with evaluated inference runs, while the raw per-model traces live in `reports/inference_logs/` and the verification outputs live in `reports/test_logs/`.
 
 ### 1. Leaderboard output
 
@@ -561,38 +561,30 @@ Perfect score (1.0 on all tasks): none
 
 ### 3. Average score chart
 
-![Average Scores](reports/average_scores.png)
-
-This chart is the high-level leaderboard view and is the quickest way to compare overall capability across models.
+The benchmark report generates an average-score chart that gives the fastest overall leaderboard comparison across models.
 
 ### 4. Per-task heatmap
 
-![Task Heatmap](reports/task_heatmap.png)
-
-This view is especially useful for spotting capability cliffs and task-specific failure modes.
+The report also generates a per-task heatmap, which is especially useful for spotting capability cliffs and task-specific failure modes.
 
 ### 5. Difficulty profile
 
-![Difficulty Profile](reports/difficulty_profile.png)
-
-This chart summarizes which tasks are easiest or hardest across the evaluated model set.
+A difficulty-profile chart summarizes which tasks are easiest or hardest across the evaluated model set.
 
 ### 6. Efficiency / protocol-view scatter
 
-![Efficiency Scatter](reports/efficiency_scatter.png)
-
-This view helps interpret whether strong models are also protocol-efficient, not just ultimately correct.
+An efficiency scatter plot helps interpret whether strong models are also protocol-efficient, not just ultimately correct.
 
 ### 7. Raw artifacts included in the bundle
 
-The included output bundle also includes:
+The generated output bundle also includes:
 
-- [results.json](reports/results.json)
-- [leaderboard.csv](reports/leaderboard.csv)
-- [summary.txt](reports/summary.txt)
-- [README.txt](reports/README.txt)
-- [inference_logs](reports/inference_logs)
-- [test_logs](reports/test_logs)
+- `results.json`
+- `leaderboard.csv`
+- `summary.txt`
+- `README.txt`
+- `inference_logs/`
+- `test_logs/`
 
 That means the README now shows not just plots, but also the exact machine-readable outputs and raw logs the benchmark produces.
 
@@ -711,7 +703,7 @@ Current unit tests cover:
 - optimal-scheme priority ordering
 - grader score floor and penalty math
 
-Archived test outputs are included under [reports/test_logs](reports/test_logs).
+When benchmark verification outputs are generated, they are written under `reports/test_logs/`.
 
 ## ✅ OpenEnv Compliance
 
