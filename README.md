@@ -303,7 +303,7 @@ flowchart TD
     C --> D["Runtime container"]
     D --> E["uvicorn server.app:app :7860"]
     E --> F["/health"]
-    G["inference.py"] --> H["Hugging Face Router or NVIDIA NIM"]
+    G["inference.py"] --> H["OpenAI, Hugging Face Router, or NVIDIA NIM"]
     G --> E
 ```
 
@@ -429,7 +429,7 @@ The repo also defines future-facing extended schemes in [server/schemes.py](serv
 
 ## 🧠 The 5 Tasks
 
-### Task 1 — Scheme Discovery `[Easy]`
+### Task 1 — Scheme Discovery
 
 The agent starts with a partially hidden profile and must collect the remaining eligibility fields before approving the **optimal** scheme, not merely an eligible one.
 
@@ -440,7 +440,7 @@ The agent starts with a partially hidden profile and must collect the remaining 
 | Minimum steps | 3 |
 | Core skill | benefit-aware scheme ranking |
 
-### Task 2 — Missing Data `[Medium]`
+### Task 2 — Missing Data
 
 The applicant file is incomplete. The agent must collect all required fields before making any terminal decision.
 
@@ -451,7 +451,7 @@ The applicant file is incomplete. The agent must collect all required fields bef
 | Minimum steps | 3 |
 | Core skill | procedural completeness |
 
-### Task 3 — Boundary Fraud Detection `[Hard]`
+### Task 3 — Boundary Fraud Detection
 
 Income is hidden initially. Once revealed, it always exceeds the PMKVY threshold, and the correct action is rejection.
 
@@ -462,7 +462,7 @@ Income is hidden initially. Once revealed, it always exceeds the PMKVY threshold
 | Minimum steps | 4 |
 | Core skill | exact arithmetic boundary reasoning |
 
-### Task 4 — Escalation Dilemma `[Expert]`
+### Task 4 — Escalation Dilemma
 
 The applicant claims to be a student, but PAN verification reveals long-term public-sector employment. The correct response is escalation after verification.
 
@@ -473,7 +473,7 @@ The applicant claims to be a student, but PAN verification reveals long-term pub
 | Minimum steps | 2 |
 | Core skill | contradiction handling and escalation |
 
-### Task 5 — Document Conflict `[Expert+]`
+### Task 5 — Document Conflict
 
 The self-reported age looks near the PMKVY boundary, but Aadhaar reveals a disqualifying official age. The correct response is verified rejection.
 
