@@ -32,6 +32,9 @@ INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1500"))
 BENCHMARK = "scheme_env"
 MAX_STEPS = 20
+# 3 repeats per task gives a reasonable mean/std estimate while keeping wall-clock
+# time manageable. With N=3, a single-task outlier cannot swing the average more
+# than ±0.33; N=5 would be more stable but triples inference costs for large models.
 N_REPEATS = int(os.getenv("N_REPEATS", "3"))  # episodes per task for score averaging
 
 TASK_NAMES = {
@@ -131,6 +134,10 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
     )
 
 
+# Eligibility rules are embedded verbatim in the system prompt rather than relying on
+# model training data because (a) these are fictional benchmark rules, not real-world
+# schemes, so training data coverage is unreliable, and (b) exact integer thresholds
+# (income ≤ 9999, not ≤ 10000) must be reproduced precisely — paraphrased recall fails.
 SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating welfare scheme applications in rural India.
 Your decisions directly affect whether vulnerable citizens receive government support.
 You must reason carefully and act only on verified information.
@@ -219,10 +226,16 @@ Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
 def _parse_action_response(raw: str) -> tuple[Optional[dict], Optional[str]]:
     """
     Extract a single action JSON object from the model response.
+
+    Uses matches[-1] (last match) rather than matches[0] because chain-of-thought
+    models often emit reasoning text before the final answer. The last JSON object
+    with an "action_type" key is the actual decision; earlier matches are typically
+    examples or intermediate reasoning steps that should be ignored.
     """
     raw = raw.replace("```json", "```")
     matches = re.findall(r'\{[^{}]*"action_type"[^{}]*\}', raw, re.DOTALL)
     if matches:
+        # Take the last match: reasoning tokens may precede the action JSON.
         raw = matches[-1]
 
     try:
@@ -250,6 +263,10 @@ def get_agent_action(observation: dict, history: list):
         f"Choose the next action and respond with JSON only."
     )
 
+    # 10 steps of history is sufficient because: (a) episodes are capped at 20 steps,
+    # so a 10-step window always covers at least the second half of any episode;
+    # (b) the current observation already embeds the full known_profile, so the model
+    # does not need to re-read early ask_question turns to know what was collected.
     messages = (
         [{"role": "system", "content": SYSTEM_PROMPT}]
         + history[-10:]
@@ -360,6 +377,8 @@ def run_episode(task: int) -> float:
                     grader_score = 0.0
             break
 
+        # Rate-limit buffer between steps — prevents 429 errors on HuggingFace Router
+        # and NVIDIA NIM endpoints that enforce per-second request quotas.
         time.sleep(0.3)
 
     grader_score = float(grader_score or 0.0)

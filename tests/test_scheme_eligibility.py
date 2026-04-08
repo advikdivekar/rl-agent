@@ -1,7 +1,10 @@
 """
 Unit tests for scheme eligibility logic and grader score computation.
 
-All functions under test are pure and deterministic — no mocking needed.
+All functions under test are pure and deterministic — no mocking, no network
+calls, no environment server needed. These tests guard against regressions in
+the integer boundary comparisons that define correct agent behaviour.
+
 Run from project root: pytest tests/
 """
 
@@ -12,6 +15,8 @@ from server.scheme_env_environment import _compute_grader_score
 
 # =========================================================
 # PMKVY BOUNDARY TESTS
+# Tests that age 18–35 and income ≤ 9999 are inclusive, and that age=36
+# or income=10000 are correctly rejected (off-by-one is a common grader bug).
 # =========================================================
 
 def test_pmkvy_qualifies_age_lower_bound():
@@ -41,6 +46,7 @@ def test_pmkvy_disqualifies_wrong_occupation():
 
 # =========================================================
 # MGNREGS BOUNDARY TESTS
+# MGNREGS has no income ceiling, so only age (18–60) and Aadhaar are decisive.
 # =========================================================
 
 def test_mgnregs_qualifies_age_lower_bound():
@@ -65,6 +71,8 @@ def test_mgnregs_disqualifies_no_aadhaar():
 
 # =========================================================
 # PMAY BOUNDARY TESTS
+# Critical boundary: income=5999 qualifies, income=6000 does not.
+# Tests that the income_max comparison is strictly > (not >=).
 # =========================================================
 
 def test_pmay_qualifies_age_lower_bound():
@@ -89,6 +97,9 @@ def test_pmay_disqualifies_age_exceeded():
 
 # =========================================================
 # get_optimal_scheme() PRIORITY TESTS
+# Verifies the benefit-value hierarchy: PMAY > MGNREGS > PMKVY.
+# An agent that returns PMKVY for a PMAY-eligible profile would score 0.5
+# in the benchmark — these tests catch regressions in priority ordering.
 # =========================================================
 
 def test_optimal_prefers_pmay_over_pmkvy():
@@ -110,6 +121,9 @@ def test_optimal_none_when_no_scheme():
 
 # =========================================================
 # _compute_grader_score TESTS
+# Validates penalty arithmetic and the [0.30, 1.0] clamp. These protect against
+# regressions where excessive noise penalties would produce negative scores,
+# making a correct-but-sloppy agent indistinguishable from a wrong one.
 # =========================================================
 
 def test_grader_score_perfect():
@@ -121,7 +135,7 @@ def test_grader_score_perfect():
 
 
 def test_grader_score_noise_penalty():
-    # base=1.0, noise_queries=5 → 1.0 - 0.40 = 0.60, clamped to [0.30, 1.0]
+    # 5 noise queries × 0.08 = -0.40 → 1.0 - 0.40 = 0.60, within [0.30, 1.0]
     score = _compute_grader_score(
         task=1, base_score=1.0, step_count=3,
         noise_queries=5, redundant_queries=0,
