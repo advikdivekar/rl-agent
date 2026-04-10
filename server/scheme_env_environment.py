@@ -339,7 +339,7 @@ def _compute_grader_score(
     document_verified: bool = False,
 ) -> float:
     """
-    Convert a terminal outcome into a continuous score in [0.30, 1.0].
+    Convert a terminal outcome into a continuous score in the open interval (0.301, 0.989).
 
     Penalty magnitudes are calibrated so a near-perfect agent (1-2 wasted
     queries, correct terminal decision) still scores > 0.80:
@@ -352,11 +352,12 @@ def _compute_grader_score(
     Bonus:
       document_verified → +0.05  (rewards proactive document verification on Tasks 4/5)
 
-    Floor at 0.30 ensures a correct-but-sloppy agent still outscores a wrong one (0.0).
-    Incorrect terminal outcomes short-circuit and return 0.0 immediately.
+    Floor at 0.301 ensures a correct-but-sloppy agent still outscores a wrong one.
+    Ceiling at 0.989 ensures scores stay strictly below 1.0 as required by the platform.
+    Incorrect terminal outcomes short-circuit and return 0.011 immediately.
     """
     if base_score <= 0.0:
-        return 0.01
+        return 0.011
 
     penalty = (noise_queries * 0.08) + (redundant_queries * 0.05)
 
@@ -369,8 +370,11 @@ def _compute_grader_score(
 
     bonus = 0.05 if document_verified else 0.0
 
-    # Open interval (0.01, 0.99) — platform requires strictly between 0 and 1
-    return round(max(0.30, min(0.99, base_score - penalty + bonus)), 3)
+    # FIX P0: platform requires scores strictly in (0, 1) — not 0.0 and not 1.0.
+    # Ceiling lowered from 0.99 to 0.989, floor raised from 0.30 to 0.301
+    # so a perfect agent never lands on exactly 0.99 and a failed agent never
+    # lands on exactly 0.01. Both exact values are rejected by Task Validation.
+    return round(max(0.301, min(0.989, base_score - penalty + bonus)), 4)
 
 
 # =========================================================
@@ -387,6 +391,14 @@ class SchemeEnvEnvironment(Environment):
       Task 3 — Boundary Fraud:         near-miss income, must detect overage
       Task 4 — Escalation Dilemma:     student/pension contradiction, must escalate
       Task 5 — Document Conflict:      self-reported vs Aadhaar age mismatch
+
+    Reward ranges:
+      Correct terminal action:   +5.0 to +10.0
+      Soft-block penalty:        -1.0 to -1.5  (episode continues)
+      Wrong terminal action:     -2.0 to -5.0
+      Timeout:                   -2.0
+
+    Grader score: open interval (0.011, 0.989) — platform requires strictly (0, 1).
     """
 
     SUPPORTS_CONCURRENT_SESSIONS = False
@@ -585,7 +597,7 @@ class SchemeEnvEnvironment(Environment):
                         obs.is_terminated = False
                         return self._finalize_step(obs)
 
-                    score = 0.01
+                    score = 0.011
                     obs.notification = (
                         "FRAUD AUTHORIZATION VIOLATION: This case has a data integrity conflict. "
                         "You cannot approve any scheme without resolving the contradiction first. "
@@ -613,7 +625,7 @@ class SchemeEnvEnvironment(Environment):
 
                 if current_task == 5 and obs.metadata.get("aadhaar_verified", False):
                     true_age = persona.get("_aadhaar_age", "36")
-                    score = 0.01
+                    score = 0.011
                     obs.notification = (
                         f"ELIGIBILITY VIOLATION: Aadhaar confirms age={true_age}. "
                         f"PMKVY requires age ≤ 35. No other scheme applies to this profile. "
@@ -643,7 +655,7 @@ class SchemeEnvEnvironment(Environment):
                         step_reward = -5.0
                         tier_label  = "THRESHOLD VIOLATION"
 
-                    score = 0.01
+                    score = 0.011
                     obs.notification = (
                         f"{tier_label}: Income {persona['income']} exceeds all scheme "
                         f"thresholds (overage: Rs {overage} above PMKVY limit). "
@@ -661,7 +673,7 @@ class SchemeEnvEnvironment(Environment):
                 # An agent that approves without collecting all fields cannot have applied
                 # the eligibility rules correctly, so the outcome is always terminal + zero score.
                 if current_task in (1, 2) and len(obs.missing_data) > 0:
-                    score = 0.01
+                    score = 0.011
                     obs.notification = (
                         f"PREMATURE APPROVAL: Still missing required fields: {obs.missing_data}. "
                         "Collect all required data before approving."
@@ -709,7 +721,7 @@ class SchemeEnvEnvironment(Environment):
                     obs.metadata["grader_score"] = score
 
                 else:
-                    score = 0.01
+                    score = 0.011
                     obs.notification  = f"ERROR: Applicant does not qualify for '{scheme}'."
                     obs.reward        = -5.0
                     obs.done          = True
@@ -733,7 +745,7 @@ class SchemeEnvEnvironment(Environment):
                         obs.done          = False
                         obs.is_terminated = False
                     else:
-                        score = 0.01
+                        score = 0.011
                         obs.notification = (
                             "PREMATURE ADJUDICATION: The data integrity conflict must be resolved "
                             "by a senior officer before any terminal decision. Use escalate."
@@ -779,7 +791,7 @@ class SchemeEnvEnvironment(Environment):
 
                 elif current_task == 3:
                     if "income" not in obs.known_profile:
-                        score = 0.01
+                        score = 0.011
                         obs.notification = (
                             "PROTOCOL VIOLATION: You must collect income data before "
                             "making a rejection decision."
@@ -808,7 +820,7 @@ class SchemeEnvEnvironment(Environment):
                         obs.metadata["grader_score"] = score
 
                 else:
-                    score = 0.01
+                    score = 0.011
                     obs.notification  = (
                         "ERROR: This applicant qualifies for a welfare scheme. "
                         "Review the eligibility criteria and approve the correct scheme."
@@ -862,8 +874,8 @@ class SchemeEnvEnvironment(Environment):
                         "integrity is genuinely compromised. This case has sufficient "
                         "information for a direct decision. Please reconsider."
                     )
-                    score = 0.01
-                    obs.reward        = -2.0       
+                    score = 0.011
+                    obs.reward        = -2.0
                     obs.done          = True
                     obs.is_terminated = True
                     obs.grader_score  = score
@@ -886,8 +898,8 @@ class SchemeEnvEnvironment(Environment):
             obs.notification             = f"TIMEOUT: {MAX_STEPS} steps reached without a decision."
             obs.reward                   = -2.0
             obs.done                     = True
-            obs.grader_score             = 0.01
-            obs.metadata["grader_score"] = 0.01
+            obs.grader_score             = 0.011
+            obs.metadata["grader_score"] = 0.011
 
         # self._obs keeps the full metadata so subsequent step() calls can read
         # pan_verified, aadhaar_verified, grader_score, etc. for branching logic.

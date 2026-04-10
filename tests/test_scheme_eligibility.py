@@ -121,22 +121,21 @@ def test_optimal_none_when_no_scheme():
 
 # =========================================================
 # _compute_grader_score TESTS
-# Validates penalty arithmetic and the (0.01, 0.99). These protect against
-# regressions where extreme penalties produce scores at or outside the open interval
-# (0, 1) required by the platform — 0.0 and 1.0 are both rejected by Task Validation.
+# FIX P0: platform requires scores strictly in open interval (0, 1).
+# Ceiling is now 0.989, floor is now 0.301, failure cases return 0.011.
 # =========================================================
 
 def test_grader_score_perfect():
-    # Platform requires score strictly < 1.0 — perfect score clamps to 0.99
+    # Ceiling is 0.989 — perfect score must never reach exactly 1.0 or 0.99
     score = _compute_grader_score(
         task=1, base_score=1.0, step_count=3,
         noise_queries=0, redundant_queries=0,
     )
-    assert score == pytest.approx(0.99, abs=1e-3)
+    assert score == pytest.approx(0.989, abs=1e-3)
 
 
 def test_grader_score_noise_penalty():
-    # 5 noise queries × 0.08 = -0.40 → 1.0 - 0.40 = 0.60, within [0.30, 1.0]
+    # 5 noise queries × 0.08 = -0.40 → 1.0 - 0.40 = 0.60, within [0.301, 0.989]
     score = _compute_grader_score(
         task=1, base_score=1.0, step_count=3,
         noise_queries=5, redundant_queries=0,
@@ -145,19 +144,18 @@ def test_grader_score_noise_penalty():
 
 
 def test_grader_score_zero_base():
-    # Platform requires score strictly > 0.0 — zero base returns 0.01
+    # Zero base returns 0.011 — strictly above 0.0 as required by platform
     score = _compute_grader_score(
         task=1, base_score=0.0, step_count=3,
         noise_queries=0, redundant_queries=0,
     )
-    assert score == pytest.approx(0.01, abs=1e-3)
+    assert score == pytest.approx(0.011, abs=1e-3)
 
 
 def test_grader_score_floor_at_030():
-    # Massive penalties should floor at 0.30, not go negative
+    # Massive penalties should floor at 0.301, not go negative
     score = _compute_grader_score(
         task=1, base_score=1.0, step_count=3,
         noise_queries=50, redundant_queries=50,
     )
-    assert score == pytest.approx(0.30, abs=1e-3)
-    
+    assert score == pytest.approx(0.301, abs=1e-3)
