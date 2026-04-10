@@ -47,6 +47,11 @@ TASK_NAMES = {
     5: "document_conflict",
 }
 
+# Path where replay buffer episodes are saved.
+# Each line is one transition in standard RL format:
+# {state, action, reward, next_state, done, task, model}
+REPLAY_BUFFER_PATH = os.getenv("REPLAY_BUFFER_PATH", "reports/replay_buffer.jsonl")
+
 
 def normalize_provider_config(base_url: str, model_name: str) -> tuple[str, str]:
     """
@@ -131,6 +136,38 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
         f"score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
+
+
+# =========================================================
+# REPLAY BUFFER
+# =========================================================
+
+def save_replay_buffer(transitions: list[dict]) -> None:
+    """
+    Append a list of transitions from one episode to the replay buffer file.
+
+    Each transition is one step in standard RL format:
+      state      — observation dict before the action
+      action     — action_type and value the agent chose
+      reward     — reward signal returned by the environment
+      next_state — observation dict after the action
+      done       — whether the episode ended after this step
+      task       — which task (1-5) this transition came from
+      model      — which model produced this action
+
+    The file is JSONL (one JSON object per line) so it can be streamed,
+    appended to across runs, and loaded directly for GRPO or DPO training.
+    """
+    if not transitions:
+        return
+
+    # Create the reports directory if it does not exist yet
+    os.makedirs(os.path.dirname(REPLAY_BUFFER_PATH), exist_ok=True)
+
+    # Append to existing file so multiple runs accumulate into one dataset
+    with open(REPLAY_BUFFER_PATH, "a", encoding="utf-8") as f:
+        for transition in transitions:
+            f.write(json.dumps(transition) + "\n")
 
 
 SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating welfare scheme applications in rural India.
@@ -295,6 +332,9 @@ def run_episode(task: int) -> float:
     history = []
     step = 0
 
+    # Collect transitions for replay buffer — one entry per step
+    transitions = []
+
     print(f"\n{'=' * 60}", flush=True)
     print(f"  TASK {task}/5 — {task_name.upper()}", flush=True)
     print(f"{'=' * 60}", flush=True)
@@ -332,6 +372,9 @@ def run_episode(task: int) -> float:
 
         history.append({"role": "assistant", "content": raw_response})
 
+        # Snapshot the state before this action executes
+        state_before = dict(obs)
+
         try:
             step_result = env_step(action_type, value)
         except Exception as e:
@@ -351,6 +394,18 @@ def run_episode(task: int) -> float:
 
         rewards.append(reward)
         action_str = f"{action_type}({value!r})"
+
+        # Record this transition for the replay buffer
+        transitions.append({
+            "state":      state_before,
+            "action":     {"action_type": action_type, "value": value},
+            "reward":     reward,
+            "next_state": dict(obs),
+            "done":       done,
+            "task":       task,
+            "task_name":  task_name,
+            "model":      MODEL_NAME,
+        })
 
         log_step(step=step, action=action_str, reward=reward, done=done, error=None)
         print(
@@ -386,6 +441,9 @@ def run_episode(task: int) -> float:
 
     grader_score = float(grader_score or 0.0)
     success = grader_score >= 1.0
+
+    # Save all transitions from this episode to the replay buffer
+    save_replay_buffer(transitions)
 
     log_end(success=success, steps=step, score=grader_score, rewards=rewards)
     print(f"\n  GRADER SCORE: {grader_score:.3f} / 1.0", flush=True)
@@ -448,6 +506,9 @@ def main():
     for t in [1, 2, 3, 4, 5]:
         print(f"SCORE_JSON {json.dumps({'task': t, 'score': mean_scores[t]})}", flush=True)
         print(f"STD_JSON {json.dumps({'task': t, 'std': std_scores[t]})}", flush=True)
+
+    # Print replay buffer location so it's visible in logs
+    print(f"\n  Replay buffer saved to: {REPLAY_BUFFER_PATH}", flush=True)
 
 
 if __name__ == "__main__":
