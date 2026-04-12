@@ -28,6 +28,7 @@ venv/
 reports/report_*/
 reports/.DS_Store
 reports/.matplotlib/
+replay_buffer.jsonl
 
 # Keep these in git
 !reports/baseline_report/
