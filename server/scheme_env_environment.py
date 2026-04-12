@@ -119,7 +119,9 @@ def generate_dynamic_persona(task_id: int) -> dict:
         # status are withheld until the agent explicitly asks for them.
         # Randomised missing_keys order prevents agents from hardcoding a fixed
         # "ask occupation first, then has_aadhaar" shortcut across episodes.
-        missing = random.sample(["occupation", "has_aadhaar"], k=2)
+        # FIX: k=random.randint(1,2) so sometimes only one field is hidden,
+        # genuinely varying episode difficulty instead of always hiding both.
+        missing = random.sample(["occupation", "has_aadhaar"], k=random.randint(1, 2))
 
         return {
             "age": str(random.randint(18, 60)),
@@ -454,11 +456,14 @@ class SchemeEnvEnvironment(Environment):
             else:
                 self._task = (self._task % 5) + 1
 
-        self._persona = generate_dynamic_persona(self._task)
-        self._state   = State(episode_id=str(uuid4()), step_count=0)
-        self._obs     = _make_fresh_obs(self._task, self._persona)
-        self._save_shared()
-        return self._obs
+            # FIX: persona generation and state mutation moved inside the lock
+            # so a concurrent step() call cannot read stale state between
+            # task selection and the new observation being written.
+            self._persona = generate_dynamic_persona(self._task)
+            self._state   = State(episode_id=str(uuid4()), step_count=0)
+            self._obs     = _make_fresh_obs(self._task, self._persona)
+            self._save_shared()
+            return self._obs
             
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:

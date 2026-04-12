@@ -101,10 +101,13 @@ class SchemeEnvGym(gym.Env):
         reward  = float(result.get("reward", 0.0))
         done    = bool(result.get("done", False))
 
-        # terminated = episode ended by environment decision
-        # truncated  = episode ended by step limit (timeout)
-        terminated = done and not obs.get("is_terminated") == "timeout"
-        truncated  = obs.get("notification", "").startswith("TIMEOUT")
+        # terminated = episode ended by environment decision (correct action or wrong action)
+        # truncated  = episode ended by step limit (timeout notification)
+        # FIX: original logic compared is_terminated (bool) to string "timeout" which
+        # was always False, making terminated always equal to done. Now both flags
+        # are derived from the notification string which is the authoritative signal.
+        terminated = done and not obs.get("notification", "").startswith("TIMEOUT")
+        truncated  = done and obs.get("notification", "").startswith("TIMEOUT")
 
         self.last_obs = obs
 
