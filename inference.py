@@ -52,6 +52,12 @@ TASK_NAMES = {
 # {state, action, reward, next_state, done, task, model}
 REPLAY_BUFFER_PATH = os.getenv("REPLAY_BUFFER_PATH", "reports/replay_buffer.jsonl")
 
+# Platform requires grader scores strictly in open interval (0, 1).
+# These constants are used everywhere a score needs to be returned
+# so there is one place to change if the bounds ever shift.
+SCORE_MIN = 0.011   # floor — never return exactly 0.0
+SCORE_MAX = 0.989   # ceiling — never return exactly 1.0
+
 
 def normalize_provider_config(base_url: str, model_name: str) -> tuple[str, str]:
     """
@@ -101,7 +107,6 @@ def _post(path: str, body: dict) -> dict:
             error_body = e.read().decode("utf-8", errors="replace").strip()
         except Exception:
             pass
-
         if error_body:
             raise RuntimeError(
                 f"{e} while POST {path} to {ENV_URL}. Response body: {error_body}"
@@ -136,6 +141,12 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
         f"score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
+
+
+def _clamp_score(score: float) -> float:
+    # Ensure score is always strictly inside (0, 1) as required by the platform.
+    # Called on every score before it is returned or logged.
+    return round(max(SCORE_MIN, min(SCORE_MAX, score)), 4)
 
 
 # =========================================================
@@ -323,11 +334,11 @@ def run_episode(task: int) -> float:
         result = env_reset(task)
     except Exception as e:
         print(f"[ERROR] env_reset failed for task {task}: {e}", flush=True)
-        log_end(success=False, steps=0, score=0.0, rewards=[])
-        return 0.0
+        log_end(success=False, steps=0, score=SCORE_MIN, rewards=[])
+        return SCORE_MIN
 
     obs = result.get("observation", result)
-    grader_score = 0.0
+    grader_score = SCORE_MIN
     rewards = []
     history = []
     step = 0
@@ -348,7 +359,7 @@ def run_episode(task: int) -> float:
         if obs.get("is_terminated", False):
             grader_score = (
                 obs.get("grader_score")
-                or obs.get("metadata", {}).get("grader_score", 0.0)
+                or obs.get("metadata", {}).get("grader_score", SCORE_MIN)
             )
             break
 
@@ -364,7 +375,8 @@ def run_episode(task: int) -> float:
                 done=True,
                 error=agent_error,
             )
-            grader_score = 0.0
+            # Agent failed — use floor score, not 0.0
+            grader_score = SCORE_MIN
             break
 
         action_type = action.get("action_type", "escalate")
@@ -427,20 +439,23 @@ def run_episode(task: int) -> float:
                 or obs.get("metadata", {}).get("grader_score", None)
             )
             if grader_score is None:
+                # Fallback: estimate from reward when server score unavailable.
+                # All values clamped through _clamp_score to stay in (0.011, 0.989).
                 if reward >= 10.0:
-                    grader_score = 1.0
+                    grader_score = SCORE_MAX
                 elif reward >= 5.0:
                     grader_score = 0.75
                 elif reward >= 3.0:
                     grader_score = 0.5
                 else:
-                    grader_score = 0.0
+                    grader_score = SCORE_MIN
             break
 
         time.sleep(0.3)
 
-    grader_score = float(grader_score or 0.0)
-    success = grader_score >= 1.0
+    # Clamp through _clamp_score so no path can ever return exact 0.0 or 1.0
+    grader_score = _clamp_score(float(grader_score or SCORE_MIN))
+    success = grader_score >= SCORE_MAX
 
     # Save all transitions from this episode to the replay buffer
     save_replay_buffer(transitions)
@@ -471,7 +486,8 @@ def main():
                 s = run_episode(task)
             except Exception as e:
                 print(f"\n  [ERROR] Task {task} repeat {repeat} failed: {e}", flush=True)
-                s = 0.0
+                # Exception path — use floor score not 0.0
+                s = SCORE_MIN
             repeat_scores.append(s)
             time.sleep(1)
 

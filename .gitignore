@@ -32,4 +32,4 @@ replay_buffer.jsonl
 
 # Keep these in git
 !reports/baseline_report/
-!reports/baseline_report/**
+!reports/baseline_report/**reports/replay_buffer.jsonl
